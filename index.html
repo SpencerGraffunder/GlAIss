@@ -169,6 +169,30 @@
     padding: 0 5px;
     font-weight: 700;
   }
+  /* Prompt entries render as distinct cards so consecutive prompts don't blur together */
+  .prompt-card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-left: 3px solid var(--accent2);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 12px;
+  }
+  .prompt-card .entry-meta { margin-bottom: 6px; }
+  .prompt-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid var(--panel-border);
+    font-size: 10.5px;
+    color: var(--dim);
+  }
+  .prompt-stats .ps { display: inline-flex; gap: 4px; align-items: baseline; }
+  .prompt-stats .ps b { color: var(--text); font-weight: 600; }
+  .prompt-stats .ps b.accent { color: var(--accent); }
+  .prompt-stats .ps b.accent2 { color: var(--accent2); }
   .role-system { color: var(--warn); }
   .role-user { color: var(--accent2); }
   .role-assistant { color: var(--accent); }
@@ -314,21 +338,56 @@ function renderPromptText(raw) {
   }).join('<br>');
 }
 
+function fmtSecs(v) {
+  if (v == null) return '—';
+  if (v < 1) return (v * 1000).toFixed(0) + 'ms';
+  return v.toFixed(2) + 's';
+}
+
 function handlePrompt(msg) {
   const div = document.createElement('div');
-  div.className = 'entry';
+  div.className = 'entry prompt-card';
   const time = new Date(msg.ts * 1000).toLocaleTimeString();
   div.innerHTML = `<div class="entry-meta">
       <span class="id-tag">${esc(msg.id)}</span>
       <span>${esc(msg.model)}</span>
       <span>~${msg.prompt_tokens_est} tok</span>
       <span>${time}</span>
-    </div><div>${renderPromptText(msg.text)}</div>`;
+    </div><div>${renderPromptText(msg.text)}</div>
+    <div class="prompt-stats" data-req="${esc(msg.id)}">
+      <span class="ps">prompt <b>~${msg.prompt_tokens_est} tok</b></span>
+      <span class="ps">est PP <b>${fmtSecs(msg.est_pp_seconds)}</b></span>
+      <span class="ps">PP <b class="pp-val">…</b></span>
+      <span class="ps">decode <b class="decode-val">…</b></span>
+      <span class="ps">out <b class="out-val">…</b></span>
+    </div>`;
   promptBody.appendChild(div);
   pCount++;
   promptCount.textContent = pCount;
   trim(promptBody, MAX_ENTRIES);
   promptBody.scrollTop = promptBody.scrollHeight;
+}
+
+// Fill in the real PP time / decode speed / output tokens on the prompt card
+// once its response finishes streaming.
+function fillPromptStats(reqId, msg) {
+  const stats = promptBody.querySelector(`.prompt-stats[data-req="${reqId}"]`);
+  if (!stats) return;
+  if (msg.pp_seconds != null) {
+    const el = stats.querySelector('.pp-val');
+    el.textContent = fmtSecs(msg.pp_seconds);
+    el.classList.add('accent');
+  }
+  if (msg.final_decode_tps != null) {
+    const el = stats.querySelector('.decode-val');
+    el.textContent = msg.final_decode_tps + ' t/s';
+    el.classList.add('accent');
+  }
+  if (msg.tokens_generated != null) {
+    const el = stats.querySelector('.out-val');
+    el.textContent = msg.tokens_generated + ' tok';
+    el.classList.add('accent2');
+  }
 }
 
 function handleResponse(msg) {
@@ -361,6 +420,7 @@ function handleResponse(msg) {
     el.appendChild(document.createElement('br'));
     el.appendChild(meta);
     delete openResponseEls[msg.id];
+    fillPromptStats(msg.id, msg);
   }
   trim(responseBody, MAX_ENTRIES);
   responseBody.scrollTop = responseBody.scrollHeight;

@@ -428,6 +428,7 @@ async def proxy(full_path: str, request: Request):
                 "done": True,
                 "pp_seconds": round(pp_seconds, 3),
                 "completion_tokens": completion_tokens,
+                "tokens_generated": completion_tokens,
                 "ts": time.time(),
             }
         )
@@ -602,6 +603,7 @@ async def _stream_and_tap(
                 "ts": time.time(),
                 "final_decode_tps": entry.get("decode_tps") if entry else None,
                 "tokens_generated": tokens_seen,
+                "pp_seconds": entry.get("pp_seconds") if entry else None,
             }
         )
 
