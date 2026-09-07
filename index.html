@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Glaiss</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #12151a;
+    --panel-border: #23282f;
+    --text: #d7dce2;
+    --dim: #7d8792;
+    --accent: #4fd1a5;
+    --accent2: #5aa9e6;
+    --warn: #e0a83e;
+    --err: #e05a5a;
+    --mono: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  body {
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+
+  /* ---------- Top bar ---------- */
+  #topbar {
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--panel);
+    padding: 10px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 24px;
+  }
+  #brand {
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  #brand span { color: var(--dim); font-weight: 400; font-size: 11px; margin-left: 6px;}
+
+  .stat-group { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+  .stat {
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 78px;
+  }
+  .stat .label { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .value { font-size: 15px; font-weight: 600; }
+  .stat .value.accent { color: var(--accent); }
+  .stat .value.accent2 { color: var(--accent2); }
+
+  #activebox {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    border-left: 1px solid var(--panel-border);
+    padding-left: 18px;
+    flex: 1 1 auto;
+    min-width: 200px;
+  }
+  .req-chip {
+    background: #1b2027; border: 1px solid var(--panel-border);
+    border-radius: 4px; padding: 4px 8px; font-size: 11px;
+    display: flex; flex-direction: column; gap: 2px; min-width: 130px;
+  }
+  .req-chip .rc-top { display: flex; justify-content: space-between; gap: 6px; color: var(--dim); }
+  .req-chip .rc-model { color: var(--accent2); font-weight: 600; }
+  .req-bar-track { height: 4px; background: #23282f; border-radius: 2px; overflow: hidden; margin-top: 2px;}
+  .req-bar-fill { height: 100%; background: var(--warn); transition: width 0.1s linear; }
+  .req-bar-fill.decode { background: var(--accent); }
+
+  #settings-toggle {
+    margin-left: auto;
+    background: #1b2027; border: 1px solid var(--panel-border); color: var(--text);
+    padding: 6px 12px; border-radius: 4px; cursor: pointer; font-family: var(--mono); font-size: 12px;
+    white-space: nowrap;
+  }
+  #settings-toggle:hover { border-color: var(--accent2); }
+
+  #settings-panel {
+    display: none;
+    flex: 0 0 auto;
+    background: var(--panel);
+    border-bottom: 1px solid var(--panel-border);
+    padding: 14px 16px;
+    gap: 18px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  #settings-panel.open { display: flex; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .field input {
+    background: #0b0d10; border: 1px solid var(--panel-border); color: var(--text);
+    padding: 6px 8px; border-radius: 4px; font-family: var(--mono); font-size: 12px; width: 160px;
+  }
+  .field input.wide { width: 320px; }
+  #settings-panel button {
+    background: var(--accent); border: none; color: #0b0d10; font-weight: 700;
+    padding: 7px 14px; border-radius: 4px; cursor: pointer; font-family: var(--mono); font-size: 12px;
+  }
+  #settings-status { font-size: 11px; color: var(--dim); align-self: center; }
+
+  /* ---------- Bottom split ---------- */
+  #panes {
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 0;
+  }
+  .pane {
+    flex: 1 1 50%;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .pane-header {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--dim);
+    border-bottom: 1px solid var(--panel-border);
+    background: #0e1013;
+    display: flex;
+    justify-content: space-between;
+  }
+  #prompt-header { color: var(--accent2); }
+  #response-header { color: var(--accent); }
+
+  .pane-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+  }
+  #divider {
+    width: 1px;
+    background: var(--panel-border);
+    flex: 0 0 auto;
+  }
+
+  .entry {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed #1c2129;
+  }
+  .entry:last-child { border-bottom: none; }
+  .entry-meta {
+    color: var(--dim);
+    font-size: 10.5px;
+    margin-bottom: 3px;
+    display: flex;
+    gap: 8px;
+  }
+  .entry-meta .id-tag {
+    color: #000;
+    background: var(--dim);
+    border-radius: 3px;
+    padding: 0 5px;
+    font-weight: 700;
+  }
+  .role-system { color: var(--warn); }
+  .role-user { color: var(--accent2); }
+  .role-assistant { color: var(--accent); }
+
+  .response-stream {
+    color: var(--text);
+  }
+  .response-stream .id-inline {
+    color: #000;
+    background: var(--dim);
+    border-radius: 3px;
+    padding: 0 5px;
+    font-size: 10px;
+    margin-right: 6px;
+    font-weight: 700;
+  }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a303a; border-radius: 4px; }
+
+  #conn-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--err); display: inline-block; margin-right: 6px;
+  }
+  #conn-dot.ok { background: var(--accent); }
+</style>
+</head>
+<body>
+
+  <div id="topbar">
+    <div id="brand">GLAISS <span>llm window</span></div>
+
+    <div class="stat-group">
+      <div class="stat">
+        <div class="label"><span id="conn-dot"></span>provider</div>
+        <div class="value" id="stat-provider">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">models</div>
+        <div class="value" id="stat-models">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">avg pp t/s</div>
+        <div class="value accent2" id="stat-pp">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">avg decode t/s</div>
+        <div class="value accent" id="stat-decode">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">requests</div>
+        <div class="value" id="stat-total">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">tokens gen</div>
+        <div class="value" id="stat-tokens">0</div>
+      </div>
+    </div>
+
+    <div id="activebox"><!-- live request chips injected here --></div>
+
+    <button id="settings-toggle">⚙ settings</button>
+  </div>
+
+  <div id="settings-panel">
+    <div class="field">
+      <label>provider host</label>
+      <input id="cfg-host" placeholder="127.0.0.1" />
+    </div>
+    <div class="field">
+      <label>provider port</label>
+      <input id="cfg-port" placeholder="8000" />
+    </div>
+    <div class="field">
+      <label>scheme</label>
+      <input id="cfg-scheme" placeholder="http" />
+    </div>
+    <div class="field">
+      <label>models (comma separated, informational)</label>
+      <input id="cfg-models" class="wide" placeholder="qwen3.8-27b, deepseek-v4-flash" />
+    </div>
+    <button id="cfg-save">save</button>
+    <div id="settings-status"></div>
+  </div>
+
+  <div id="panes">
+    <div class="pane" id="prompt-pane">
+      <div class="pane-header" id="prompt-header">
+        <span>◀ incoming prompts</span>
+        <span id="prompt-count">0</span>
+      </div>
+      <div class="pane-body" id="prompt-body"></div>
+    </div>
+    <div id="divider"></div>
+    <div class="pane" id="response-pane">
+      <div class="pane-header" id="response-header">
+        <span>response stream ▶</span>
+        <span id="response-count">0</span>
+      </div>
+      <div class="pane-body" id="response-body"></div>
+    </div>
+  </div>
+
+<script>
+const promptBody = document.getElementById('prompt-body');
+const responseBody = document.getElementById('response-body');
+const promptCount = document.getElementById('prompt-count');
+const responseCount = document.getElementById('response-count');
+const activebox = document.getElementById('activebox');
+const connDot = document.getElementById('conn-dot');
+
+let pCount = 0, rCount = 0;
+const MAX_ENTRIES = 300; // trim old DOM entries so the page doesn't grow forever
+const openResponseEls = {}; // req_id -> element currently streaming into
+
+function trim(container, max) {
+  while (container.children.length > max) {
+    container.removeChild(container.firstChild);
+  }
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.innerText = s;
+  return d.innerHTML;
+}
+
+function roleClass(role) {
+  if (role === 'system') return 'role-system';
+  if (role === 'user') return 'role-user';
+  if (role === 'assistant') return 'role-assistant';
+  return '';
+}
+
+function renderPromptText(raw) {
+  // raw looks like "[system] ...\n[user] ...\n" — colorize the role tags
+  return raw.split('\n').map(line => {
+    const m = line.match(/^\[(\w+)\]\s?(.*)$/s);
+    if (m) {
+      return `<span class="${roleClass(m[1])}">[${esc(m[1])}]</span> ${esc(m[2])}`;
+    }
+    return esc(line);
+  }).join('<br>');
+}
+
+function handlePrompt(msg) {
+  const div = document.createElement('div');
+  div.className = 'entry';
+  const time = new Date(msg.ts * 1000).toLocaleTimeString();
+  div.innerHTML = `<div class="entry-meta">
+      <span class="id-tag">${esc(msg.id)}</span>
+      <span>${esc(msg.model)}</span>
+      <span>~${msg.prompt_tokens_est} tok</span>
+      <span>${time}</span>
+    </div><div>${renderPromptText(msg.text)}</div>`;
+  promptBody.appendChild(div);
+  pCount++;
+  promptCount.textContent = pCount;
+  trim(promptBody, MAX_ENTRIES);
+  promptBody.scrollTop = promptBody.scrollHeight;
+}
+
+function handleResponse(msg) {
+  let el = openResponseEls[msg.id];
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'entry response-stream';
+    const idTag = document.createElement('span');
+    idTag.className = 'id-inline';
+    idTag.textContent = msg.id;
+    el.appendChild(idTag);
+    const textSpan = document.createElement('span');
+    textSpan.className = 'text-part';
+    el.appendChild(textSpan);
+    responseBody.appendChild(el);
+    openResponseEls[msg.id] = el;
+    rCount++;
+    responseCount.textContent = rCount;
+  }
+  if (msg.text) {
+    el.querySelector('.text-part').append(msg.text);
+  }
+  if (msg.done) {
+    const meta = document.createElement('div');
+    meta.className = 'entry-meta';
+    let bits = [];
+    if (msg.final_decode_tps) bits.push(`${msg.final_decode_tps} t/s`);
+    if (msg.tokens_generated) bits.push(`${msg.tokens_generated} tok`);
+    meta.textContent = bits.join(' · ');
+    el.appendChild(document.createElement('br'));
+    el.appendChild(meta);
+    delete openResponseEls[msg.id];
+  }
+  trim(responseBody, MAX_ENTRIES);
+  responseBody.scrollTop = responseBody.scrollHeight;
+}
+
+function renderActiveChips(activeRequests) {
+  activebox.innerHTML = '';
+  activeRequests.forEach(r => {
+    const chip = document.createElement('div');
+    chip.className = 'req-chip';
+    const phaseLabel = r.phase === 'prefill' ? `PP ${r.pp_progress_pct}%` : `${r.decode_tps ?? '…'} t/s`;
+    const pct = r.phase === 'prefill' ? r.pp_progress_pct : 100;
+    const barClass = r.phase === 'decode' ? 'req-bar-fill decode' : 'req-bar-fill';
+    chip.innerHTML = `
+      <div class="rc-top"><span class="rc-model">${esc(r.model)}</span><span>${esc(r.id)}</span></div>
+      <div>${phaseLabel}</div>
+      <div class="req-bar-track"><div class="${barClass}" style="width:${pct}%"></div></div>
+    `;
+    activebox.appendChild(chip);
+  });
+}
+
+function updateStats(msg) {
+  document.getElementById('stat-provider').textContent = msg.provider || '—';
+  document.getElementById('stat-models').textContent = (msg.models && msg.models.length) ? msg.models.join(', ') : 'any';
+  document.getElementById('stat-pp').textContent = msg.avg_pp_tps != null ? msg.avg_pp_tps : '—';
+  document.getElementById('stat-decode').textContent = msg.avg_decode_tps != null ? msg.avg_decode_tps : '—';
+  document.getElementById('stat-total').textContent = msg.total_requests;
+  document.getElementById('stat-tokens').textContent = msg.total_tokens_generated;
+  renderActiveChips(msg.active_requests || []);
+}
+
+function applyConfig(cfg) {
+  document.getElementById('cfg-host').value = cfg.provider_host;
+  document.getElementById('cfg-port').value = cfg.provider_port;
+  document.getElementById('cfg-scheme').value = cfg.provider_scheme;
+  document.getElementById('cfg-models').value = (cfg.models || []).join(', ');
+}
+
+// ---------------- WebSocket ----------------
+let ws;
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => connDot.classList.add('ok');
+  ws.onclose = () => { connDot.classList.remove('ok'); setTimeout(connect, 1500); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'stats') updateStats(msg);
+    else if (msg.type === 'prompt') handlePrompt(msg);
+    else if (msg.type === 'response') handleResponse(msg);
+    else if (msg.type === 'config') applyConfig(msg.config);
+    else if (msg.type === 'error') handleResponse({id: msg.id, text: `[error] ${msg.text}`, done: true});
+  };
+}
+connect();
+
+// ---------------- Settings panel ----------------
+const toggle = document.getElementById('settings-toggle');
+const panel = document.getElementById('settings-panel');
+toggle.onclick = () => panel.classList.toggle('open');
+
+document.getElementById('cfg-save').onclick = async () => {
+  const body = {
+    provider_host: document.getElementById('cfg-host').value.trim(),
+    provider_port: parseInt(document.getElementById('cfg-port').value.trim(), 10),
+    provider_scheme: document.getElementById('cfg-scheme').value.trim() || 'http',
+    models: document.getElementById('cfg-models').value.split(',').map(s => s.trim()).filter(Boolean),
+  };
+  const statusEl = document.getElementById('settings-status');
+  statusEl.textContent = 'saving...';
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      statusEl.textContent = 'saved ✓';
+      setTimeout(() => statusEl.textContent = '', 1500);
+    } else {
+      statusEl.textContent = 'error saving';
+    }
+  } catch (e) {
+    statusEl.textContent = 'error: ' + e;
+  }
+};
+
+// initial config fetch in case websocket is slow
+fetch('/api/config').then(r => r.json()).then(applyConfig).catch(()=>{});
+</script>
+</body>
+</html>
