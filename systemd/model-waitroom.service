@@ -1,6 +1,6 @@
 [Unit]
 Description=llpc model-waitroom — :8080 single door; fair swap queue across every catalog model, fail-open to each model's own engine port
-Documentation=https://github.com/Spec-Graffunder/glaiss
+Documentation=https://github.com/SpencerGraffunder/GlAIss
 After=network-online.target
 Wants=network-online.target
 RequiresMountsFor=/mnt/blk-ssd

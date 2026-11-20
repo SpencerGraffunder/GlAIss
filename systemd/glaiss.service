@@ -1,6 +1,6 @@
 [Unit]
 Description=GlAIss waitroom observability and manual model-control console on :8899
-Documentation=https://github.com/Spec-Graffunder/glaiss
+Documentation=https://github.com/SpencerGraffunder/GlAIss
 After=network-online.target model-waitroom.service
 Wants=network-online.target
 RequiresMountsFor=/mnt/blk-ssd

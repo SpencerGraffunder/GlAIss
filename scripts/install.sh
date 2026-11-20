@@ -21,6 +21,7 @@ WAITROOM_UNIT="${WAITROOM_UNIT:-/etc/systemd/system/model-waitroom.service}"
 DO_WEB=0
 DO_WAITROOM=0
 RESTART=1
+ORIGINAL_ARGS=("$@")
 
 usage() { sed -n '2,9p' "$0" >&2; exit 2; }
 while [[ $# -gt 0 ]]; do
@@ -37,7 +38,7 @@ done
 [[ $((DO_WEB + DO_WAITROOM)) -eq 0 ]] && usage
 
 if [[ $EUID -ne 0 ]]; then
-  exec sudo "$0" "$@"
+  exec sudo "$0" "${ORIGINAL_ARGS[@]}"
 fi
 
 sync_repo() {
