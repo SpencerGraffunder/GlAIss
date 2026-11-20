@@ -1,0 +1,20 @@
+[Unit]
+Description=llpc model-waitroom — :8080 single door; fair swap queue across every catalog model, fail-open to each model's own engine port
+Documentation=https://github.com/Spec-Graffunder/glaiss
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/blk-ssd
+
+[Service]
+Type=simple
+User=graffunder
+Environment=WAITROOM_BACKEND=http://127.0.0.1:8085
+Environment=WAITROOM_WAIT_S=1500
+Environment=PYTHONPATH=/opt/glaiss
+Environment=GLAISS_EVENTS_URL=http://127.0.0.1:8899/internal/waitroom/events
+ExecStart=/usr/bin/python3 /home/graffunder/llama-swap/waitroom.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

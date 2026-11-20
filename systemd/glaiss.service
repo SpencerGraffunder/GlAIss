@@ -1,0 +1,26 @@
+[Unit]
+Description=GlAIss waitroom observability and manual model-control console on :8899
+Documentation=https://github.com/Spec-Graffunder/glaiss
+After=network-online.target model-waitroom.service
+Wants=network-online.target
+RequiresMountsFor=/mnt/blk-ssd
+
+[Service]
+Type=simple
+User=graffunder
+WorkingDirectory=/opt/glaiss
+Environment=GLAISS_STATE_DIR=/var/lib/glaiss
+Environment=GLAISS_PROVIDER_HOST=127.0.0.1
+Environment=GLAISS_PROVIDER_PORT=8080
+Environment=GLAISS_PROVIDER_SCHEME=http
+Environment=LLPC_HOME=/home/graffunder
+Environment=LLPC_SWAP_DIR=/home/graffunder/llama-swap
+Environment=LLPC_STATE_DIR=/home/graffunder/.llama-swap
+Environment=WAITROOM_URL=http://127.0.0.1:8080
+Environment=LLAMA_SWAP_URL=http://127.0.0.1:8090
+ExecStart=/opt/glaiss/.venv/bin/python /opt/glaiss/glaiss.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

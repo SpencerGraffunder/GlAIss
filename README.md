@@ -1,83 +1,145 @@
-# Glaiss
+# GlAIss
 
-A window into what your local LLMs are doing. A transparent reverse proxy
-you put in front of your OpenAI-compatible backend (vLLM, llama.cpp server,
-LM Studio, etc). Requests/responses pass through unmodified — Glaiss just
-taps the traffic to show live stats and a scrolling prompt/response log.
+GlAIss is the llpc inference operations console. It combines the original
+transparent LLM proxy window with the live `model-waitroom` queue and llama-swap
+model control.
 
-## Setup (Ubuntu 26, on the X299 box)
+The web UI has **no login, MFA, or authorization layer by design**. It is an
+admin-only operations surface and is expected to be reachable only through the
+trusted VPN network.
+
+## What it shows
+
+- Original GlAIss request queue, FIFO position, prefill estimate, real decode
+  t/s, streaming response text, and reasoning stream.
+- llpc waitroom state: loaded model, active arbiter model, in-flight requests,
+  ordered waiting models, swap hysteresis, quantum timer, handoffs, Comfy claim,
+  intent, manual lock, and manual-control suppression.
+- Per-service rows matching the standard llpc journal command:
+
+  `journalctl -u strata31 -u llama-qwen -u comfy-ui -u llama-swap -u whisper-server -u whisper-shim -u switcheroo-control -u model-waitroom -u strata-dsv41.service -u llama-server`
+
+- Service CPU, RSS, VRAM, PID, state, restart count, recent log count, last log,
+  and a live journal console for the same units.
+- CPU package power, total GPU power, combined system power, RAM, VRAM, CPU and
+  GPU utilization, decode t/s, and prefill t/s history.
+- Registry-backed model catalog and manual model controls.
+
+## Architecture
+
+```text
+clients -> GlAIss :8899 -> llpc waitroom :8080 -> llama-swap :8090 -> engine
+                         -> monitor/control router
+                         -> journal + RAPL + nvidia-smi + llama-swap + registry
+```
+
+The proxy remains transparent for inference. Monitor routes are mounted before
+the proxy catch-all. `WAITROOM_URL` defaults to `http://127.0.0.1:8080`;
+monitoring llama-swap directly at `LLAMA_SWAP_URL` is read-only and used for
+running state and manual unload operations.
+
+```text
+glaiss.py                      runtime entrypoint
+glaiss_app/proxy.py            original FIFO proxy and websocket log
+glaiss_app/monitor.py          monitor/control router and model-control jobs
+glaiss_app/collectors.py       waitroom, systemd, GPU, RAPL, RAM collectors
+glaiss_app/journal.py          journalctl follow ring
+glaiss_app/model_state.py      shared manual-lock/manual-control file format
+glaiss_app/static/index.html   operations console
+llpc/waitroom.py               llpc source of truth, with GlAIss event feed
+llpc/model_control.py          CLI with the same lock/inflight guards
+systemd/                       canonical unit files
+scripts/install.sh             local deployment helper
+```
+
+## Manual model controls
+
+Dashboard actions and CLI equivalents:
 
 ```bash
-cd ~/glaiss   # or wherever you put this folder
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+llpc/model_control.py list
+llpc/model_control.py load 'DeepSeek V4.1 Flash'
+llpc/model_control.py load --lock 'Qwen 3.8 Flash Next Q4'
+llpc/model_control.py lock 'Qwen 3.8 Flash Next Q4'
+llpc/model_control.py unload 'Qwen 3.8 27B Q6'
+llpc/model_control.py unlock
+llpc/model_control.py resume-auto
 ```
 
-## Run
+Safety behavior:
+
+- Text loads use `swap-to.sh`; direct unit start/stop is not used.
+- A manual lock rejects requests and control actions for other models with
+  HTTP 409 / `model_locked`.
+- Unload refuses while waitroom reports a request in flight unless
+  `force`/`--force` is explicitly used.
+- Unload refuses to break a manual lock unless `break_lock`/`--break-lock` is
+  explicitly used.
+- Load/unload/lock are single-flight jobs. The UI disables controls while a job
+  is queued or running and refreshes state after completion.
+- The server only performs model transitions the CLI was always allowed to
+  perform. First boot of a disabled engine is still a human decision.
+
+## Deployment
+
+From this repository:
 
 ```bash
-python3 glaiss.py
+./scripts/install.sh all
 ```
 
-First run creates `glaiss_config.json` next to the script with defaults:
-- listens on port 8899
-- forwards to http://127.0.0.1:8000 (change this in the dashboard settings
-  panel, or edit the JSON directly)
+Use `scripts/install.sh web` for only GlAIss. Use `--no-restart` to stage
+without touching the active waitroom. The installer syncs to `/opt/glaiss`,
+creates `/var/lib/glaiss`, installs its virtualenv, installs the canonical units,
+and restarts only `glaiss.service` and/or `model-waitroom.service`. It never
+starts or stops model engines.
 
-Dashboard: `http://<box-ip>:8899/`
+Development run:
 
-## Point your clients at Glaiss
-
-Wherever you were pointing at vLLM/llama.cpp directly (e.g.
-`http://127.0.0.1:8000/v1/chat/completions`), point at Glaiss instead:
-
-```
-http://<box-ip>:8899/v1/chat/completions
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+GLAISS_STATE_DIR=.venv/glaiss-state .venv/bin/python glaiss.py
 ```
 
-Glaiss forwards everything else through unchanged, so `/v1/models`, auth
-headers, etc. all pass through as normal — it's a transparent proxy, not a
-gateway that needs its own auth or model registry.
+Open `http://<llpc-vpn-address>:8899/`.
 
-## Settings panel
+## Environment
 
-Top-right gear icon. Lets you change:
-- **provider host/port/scheme** — where Glaiss forwards to (your real
-  backend). Takes effect immediately, no restart.
-- **models** — free-text list, purely informational/display (shown in the
-  top stats bar). Glaiss doesn't validate or route based on this — it just
-  forwards whatever `model` field the client sent.
+| Variable | Default | Meaning |
+|---|---|---|
+| `GLAISS_STATE_DIR` | repo directory | writable config directory |
+| `GLAISS_LISTEN_PORT` | config/8899 | listen port override |
+| `GLAISS_PROVIDER_HOST` | `127.0.0.1` | proxy destination |
+| `GLAISS_PROVIDER_PORT` | config/8080 | proxy destination port |
+| `WAITROOM_URL` | `http://127.0.0.1:8080` | monitor source |
+| `LLAMA_SWAP_URL` | `http://127.0.0.1:8090` | running state and unload API |
+| `LLPC_MODELS_PY` | `~/llama-swap/llpc_models.py` | model registry |
+| `GLAISS_MONITOR_POLL_S` | `2` | collector interval |
+| `GLAISS_DISABLE_MONITOR_TASKS` | off | disable background collectors for tests |
 
-## Notes on the numbers
+## API
 
-- **Prompt token counts and PP t/s are estimates.** Glaiss tokenizes with
-  `cl100k_base` (a generic tokenizer) since it has no access to your actual
-  model's tokenizer — the real count will differ somewhat depending on
-  model. Good enough for a progress readout, not exact.
-- **PP progress %** is a *projected* bar: Glaiss estimates prefill time from
-  (estimated prompt tokens ÷ a rolling average PP-tokens/sec for that model)
-  and ticks a bar toward 100% while waiting for the first streamed token. The
-  instant the real first token arrives, it snaps to 100% and records the
-  *actual* PP time, which folds back into the rolling average — so the
-  estimate self-calibrates the more you use it. There's no way to get true
-  mid-prefill progress from most backends since prefill is opaque until the
-  first token emits.
-- **Decode t/s** is real, computed from actual inter-token arrival times
-  during streaming — not an estimate.
-- Non-streaming requests (`stream: false`) still get logged, but decode t/s
-  isn't meaningful for those (you get PP time + total tokens only).
+- `GET /api/health`
+- `GET /api/state`
+- `GET /api/history?seconds=900`
+- `GET /api/model`
+- `GET /api/services`
+- `GET /api/system`
+- `GET /api/logs?limit=300&unit=strata31&level=error`
+- `POST /internal/waitroom/events` (waitroom fire-and-forget feed)
+- `POST /api/control/load`
+- `POST /api/control/unload`
+- `POST /api/control/lock`
+- `POST /api/control/unlock`
+- `POST /api/control/resume_auto`
 
-## Multiple concurrent requests
+## Tests
 
-Each request gets a short ID shown as a tag on both the prompt entry and the
-matching response stream, and in a live chip in the top bar while it's in
-flight. If you fire off several requests at once, use the ID tags to match
-prompts to responses in the two panes.
+```bash
+.venv/bin/python -m pytest -q
+```
 
-## Files
-
-- `glaiss.py` — the proxy + stats engine + websocket hub (single file)
-- `static/index.html` — the dashboard (single file, no build step)
-- `glaiss_config.json` — created on first run, holds provider address and
-  the self-calibrating PP-speed table per model
+Tests cover FIFO serialization, cancellation, prompt diffing, history replay,
+monitor route precedence, waitroom event fan-out, hysteresis/lock state, and
+manual-control guards. No test starts, loads, or stops a production model.

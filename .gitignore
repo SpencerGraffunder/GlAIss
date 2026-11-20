@@ -12,3 +12,12 @@ glaiss_config.json
 .DS_Store
 .idea/
 .vscode/
+
+# Local artifacts that do not belong in the GlAIss product repo
+/Thaumcraft-6-Source-Code/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
