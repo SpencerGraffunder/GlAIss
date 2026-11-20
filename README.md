@@ -102,7 +102,12 @@ python3 -m venv .venv
 GLAISS_STATE_DIR=.venv/glaiss-state .venv/bin/python glaiss.py
 ```
 
-Open `http://<llpc-vpn-address>:8899/`.
+Open **https://glaiss.nuclearquads.com/** — the canonical entry point. It is
+served from llpc `:8899` through the UnCube `uncube` cloudflared tunnel
+(ingress rule `glaiss.nuclearquads.com → http://192.168.4.164:8899`) and sits
+behind the account's catch-all Cloudflare Access app (Google login): the UI
+itself has no auth by design, and Zero Trust is the only gate. Direct LAN/Tailscale
+access to `http://<llpc-address>:8899/` still works for local debugging.
 
 ## Environment
 
