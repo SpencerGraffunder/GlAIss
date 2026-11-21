@@ -17,6 +17,3 @@ build/
 .DS_Store
 .idea/
 .vscode/
-
-# Unrelated checkouts that happen to live in this directory (not part of GlAIss).
-Thaumcraft-6-Source-Code/

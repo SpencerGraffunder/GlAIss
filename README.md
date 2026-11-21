@@ -164,9 +164,11 @@ traffic, that is the door's job on `:8080`.
 .venv/bin/python -m pytest -q
 ```
 
-Tests cover the single-proxy rule (`test_single_proxy.py`), the console page's
-DOM/JS contract (`test_ui_contract.py`), engine token-speed parsing
-(`test_engine_metrics.py`), monitor routes and waitroom event fan-out,
+Tests cover the single-proxy rule and the exact HTTP surface
+(`test_single_proxy.py`), the console page's DOM/JS contract including "the page
+calls no route that doesn't exist" (`test_ui_contract.py`), the ban on
+unreferenced top-level names (`test_no_dead_code.py`), engine token-speed
+parsing (`test_engine_metrics.py`), monitor routes and waitroom event fan-out,
 hysteresis/lock state, and manual-control guards. The waitroom's own 102-check
 suite runs standalone: `python3 llpc/test_waitroom.py`. No test starts, loads,
 or stops a production model.

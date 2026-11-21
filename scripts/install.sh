@@ -49,7 +49,6 @@ sync_repo() {
     --exclude '__pycache__/' \
     --exclude '*.py[cod]' \
     --exclude 'glaiss_config.json' \
-    --exclude 'Thaumcraft-6-Source-Code/' \
     "$REPO/" "$DEST/"
 }
 
