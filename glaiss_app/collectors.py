@@ -143,7 +143,7 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "ok": False, "error": "no metrics payload", "decode_tps": None, "prefill_tps": None,
         "phase": None, "prompt_tokens": None, "prompt_read": None, "generated": None,
-        "cache_hit_rate": None, "requests": 0, "source": None,
+        "cache_hit_rate": None, "requests": 0, "lifetime_requests": None, "source": None,
     }
     if not isinstance(payload, dict) or not payload:
         out["error"] = "no metrics payload"
@@ -177,13 +177,19 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
         "generated": live.get("generated"),
         "cache_hit_rate": last.get("hit_rate"),
         "requests": len(reqs),
+        "lifetime_requests": (payload.get("totals") or {}).get("requests") if isinstance(payload.get("totals"), dict) else None,
         "source": "engine/metrics",
     })
     return out
 
 
 async def engine_metrics(port: Optional[int], api_key: Optional[str] = None) -> Dict[str, Any]:
-    """Token speed straight from the loaded engine (clients rarely route via the proxy)."""
+    """Token speed straight from the loaded engine.
+
+    This is the ONLY token-speed source: the console never sits in the request
+    path (the waitroom door at :8080 is the single proxy), so it cannot observe
+    traffic itself.
+    """
     if not port:
         return {"ok": False, "error": "no engine port for the loaded model", "decode_tps": None, "prefill_tps": None}
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None

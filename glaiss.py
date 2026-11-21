@@ -1,42 +1,36 @@
 #!/usr/bin/env python3
-"""GlAIss combined waitroom observability entrypoint.
+"""GlAIss console entrypoint (default :8899).
 
-The old proxy implementation now lives in ``glaiss_app/proxy.py``; monitor and
-manual model-control endpoints are mounted before the catch-all proxy route.
+The console OBSERVES the llpc inference stack and lets an operator move the model
+slot by hand. It does not proxy anything: the single proxy in this repo is the
+waitroom door (``llpc/waitroom.py`` on :8080), which every client talks to
+directly. See ``glaiss_app/console.py`` for what this module must never become.
 """
 
 from __future__ import annotations
 
 import uvicorn
 
-from glaiss_app import monitor
-from glaiss_app import proxy
+from glaiss_app import __version__, console, monitor
 
-monitor.install(proxy)
+monitor.install(console)
 
-app = proxy.app
-CONFIG = proxy.CONFIG
-CONFIG_PATH = proxy.CONFIG_PATH
-BASE_DIR = proxy.BASE_DIR
-STATE_DIR = proxy.STATE_DIR
-STATIC_DIR = proxy.STATIC_DIR
-
-Hub = proxy.Hub
-hub = proxy.hub
-GenQueue = proxy.GenQueue
-gen_queue = proxy.gen_queue
-Stats = proxy.Stats
-stats = proxy.stats
-request_tasks = proxy.request_tasks
-stats_pusher = proxy.stats_pusher
-load_config = proxy.load_config
-save_config = proxy.save_config
+app = console.app
+CONFIG = console.CONFIG
+CONFIG_PATH = console.CONFIG_PATH
+BASE_DIR = console.BASE_DIR
+STATE_DIR = console.STATE_DIR
+STATIC_DIR = console.STATIC_DIR
+Hub = console.Hub
+hub = console.hub
 
 
 def main() -> None:
-    print(f"GlAIss listening on 0.0.0.0:{CONFIG['listen_port']}")
-    print(f"Proxying chat traffic to provider at {proxy.provider_base_url()}")
-    print(f"LLPC monitor mounted on /api/state and /api/services")
+    from glaiss_app import collectors as C
+
+    print(f"GlAIss console {__version__} listening on 0.0.0.0:{CONFIG['listen_port']}")
+    print(f"Observing waitroom door at {C.WAITROOM_URL} (this process proxies nothing)")
+    print("Model control: /api/control/* -> swap-to.sh | monitor: /api/state, /api/services, /api/logs")
     uvicorn.run(app, host="0.0.0.0", port=CONFIG["listen_port"])
 
 

@@ -1,3 +1,9 @@
+> **Historical record (pre-2026-11).** This plan was written while GlAIss still
+> shipped its own transparent proxy in front of the waitroom. That proxy was
+> removed on 2026-11-21: the repo now has exactly one proxy, `llpc/waitroom.py`
+> on :8080, and GlAIss is a console only. Read this for rationale, not for the
+> current shape of the code — see `README.md` for that.
+
 # GlAIss + llpc Waitroom Observability Plan
 
 Date: 2026-11-20  

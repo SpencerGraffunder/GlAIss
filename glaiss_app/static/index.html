@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>GlAIss · waitroom control</title>
+<title>GlAIss · llpc waitroom console</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
@@ -19,16 +19,15 @@
   .stat .value{font-size:14px;font-weight:700;margin-top:2px}.v-accent{color:var(--accent)}.v-blue{color:var(--accent2)}.v-warn{color:var(--warn)}.v-err{color:var(--err)}
   #monitor-dot,#ws-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--err);margin-right:5px}
   .dot-ok{background:var(--ok)!important}
-  .right{margin-left:auto}.ghost{background:#1c2129;border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 10px;cursor:pointer}
+  .ghost{background:#1c2129;border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 10px;cursor:pointer}
   .ghost:hover{border-color:var(--accent2)}
-  #settings{display:none;background:var(--panel);border-bottom:1px solid var(--border);padding:12px 14px;gap:14px;align-items:end;flex-wrap:wrap}
-  #settings.open{display:flex}.field{display:flex;flex-direction:column;gap:4px}.field label{font:10px var(--mono);color:var(--dim);text-transform:uppercase}.field input{width:160px;background:#0b0d10;border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px;font:12px var(--mono)}
   .primary{background:var(--accent);border:none;color:#082018;font-weight:800;border-radius:4px;padding:7px 12px;cursor:pointer}
   .danger{background:#3d1d22;border-color:#753137;color:#ffb8ba!important}
   #queue-strip{border-bottom:1px solid var(--border);background:var(--panel2);padding:8px 14px;display:flex;align-items:center;gap:12px;overflow:auto;min-height:54px}
-  .qs-title{color:var(--dim);font:10px var(--mono);text-transform:uppercase;letter-spacing:1px}.qboxes{display:flex;gap:9px}.qbox{min-width:175px;border:1px solid var(--border);background:#1b2027;border-radius:5px;padding:7px 9px}.qbox.running{border-color:var(--accent)}.qbox.queued{border-style:dashed;opacity:.85}.qbox.finished{opacity:.65}
-  .qbox .a{display:flex;justify-content:space-between;gap:8px;align-items:center}.qbox .m{font-size:11px;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;margin-top:5px}.qbox b{color:var(--text)}.cancel{border:0;background:none;color:var(--dim);cursor:pointer;font-size:14px}.cancel:hover{color:var(--err)}
-  #ops{height:43vh;min-height:260px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;background:#0d1014}
+  .qs-title{color:var(--dim);font:10px var(--mono);text-transform:uppercase;letter-spacing:1px}.qboxes{display:flex;gap:9px}.qbox{min-width:175px;border:1px solid var(--border);background:#1b2027;border-radius:5px;padding:7px 9px}.qbox.running{border-color:var(--accent)}.qbox.queued{border-style:dashed;opacity:.85}
+  .qbox .a{display:flex;justify-content:space-between;gap:8px;align-items:center}.qbox .m{font-size:11px;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;margin-top:5px}.qbox b{color:var(--text)}
+  #last-event{margin-left:auto;color:var(--dim);font-size:11px;white-space:nowrap}
+  #ops{flex:1 1 auto;min-height:260px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;background:#0d1014}
   #ops-tabs{border-bottom:1px solid var(--border);display:flex;gap:2px;padding:6px 8px;background:var(--panel);align-items:center;overflow:auto}
   .tab{background:none;border:0;color:var(--dim);padding:7px 11px;cursor:pointer;border-bottom:2px solid transparent}.tab.active{color:var(--accent);border-bottom-color:var(--accent)}.tab-count{color:var(--accent);font-size:10px}
   #ops-actions{margin-left:auto;display:flex;gap:7px;align-items:center}.jobline{font-size:11px;color:var(--dim);max-width:350px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -42,44 +41,31 @@
   #log-box{height:calc(100% - 36px);overflow:auto;background:#080a0c;border:1px solid var(--border);border-radius:5px;padding:7px;line-height:1.35}
   .log{padding:2px 0;border-bottom:1px solid #15191e}.log .time{color:#5b6672;margin-right:6px}.log .unit{color:var(--accent2);margin-right:6px}.log.error{color:#ff9d9d}.log.warn{color:#f1cc7d}
   .charts{display:grid;grid-template-columns:1fr 1fr;gap:10px}.chart{height:190px;background:#090b0e;border:1px solid var(--border);border-radius:6px;padding:8px} .chart canvas{width:100%;height:145px;display:block}.chart-title{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}.chart-value{float:right;color:var(--accent)}
-  #panes{flex:1 1 auto;display:flex;min-height:0} .pane{flex:1 1 50%;display:flex;flex-direction:column;min-width:0}.pane-header{padding:6px 12px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);background:#0e1013;display:flex;justify-content:space-between}
-  #prompt-header{color:var(--accent2)}#response-header{color:var(--accent)}.pane-body{flex:1;overflow:auto;padding:10px 12px;white-space:pre-wrap;word-break:break-word;line-height:1.45}.divider{width:1px;background:var(--border)}
-  .entry{margin-bottom:10px;padding-bottom:9px;border-bottom:1px dashed #1c2129}.entry:last-child{border-bottom:0}.entry-meta{color:var(--dim);font-size:10px;margin-bottom:4px;display:flex;gap:8px}.idtag{color:#000;background:var(--dim);padding:0 5px;border-radius:3px;font-weight:800}
-  .prompt-card{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent2);border-radius:5px;padding:8px 9px}.prompt-stats{display:flex;gap:14px;color:var(--dim);font-size:10px;margin-top:7px;border-top:1px solid var(--border);padding-top:6px}.prompt-stats b{color:var(--text)}.diff-badge{background:var(--accent2);color:#000;padding:0 5px;font-size:10px;font-weight:800}
-  .role-system{color:var(--warn)}.role-user{color:var(--accent2)}.role-assistant{color:var(--accent)}.thinking-block{display:none;border-left:2px solid var(--dim);margin:3px 0;padding:2px 7px;background:rgba(255,255,255,.025)}.thinking-block summary{cursor:pointer;color:var(--dim);font-size:10px;text-transform:uppercase}.thinking-text{color:var(--dim);font-style:italic;white-space:pre-wrap}
   ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#2b323a;border-radius:4px}
-  @media(max-width:980px){#ops{height:auto;max-height:55vh}.grid{grid-template-columns:1fr}.charts{grid-template-columns:1fr}}
+  @media(max-width:980px){#ops{height:auto;max-height:60vh}.grid{grid-template-columns:1fr}.charts{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header id="topbar">
-  <div id="brand">GLAISS <small>llpc waitroom control</small></div>
+  <div id="brand">GLAISS <small>llpc waitroom console</small></div>
   <div class="stats">
-    <div class="stat"><div class="label"><span id="ws-dot"></span>live proxy</div><div class="value v-accent" id="stat-proxy">—</div></div>
+    <div class="stat"><div class="label"><span id="ws-dot"></span>live</div><div class="value v-accent" id="stat-live">console</div></div>
     <div class="stat"><div class="label"><span id="monitor-dot"></span>monitor</div><div class="value" id="stat-monitor">—</div></div>
+    <div class="stat"><div class="label">door</div><div class="value" id="stat-door">—</div></div>
     <div class="stat"><div class="label">loaded model</div><div class="value v-blue" id="stat-loaded">—</div></div>
     <div class="stat"><div class="label">arbiter</div><div class="value" id="stat-active">—</div></div>
     <div class="stat"><div class="label">hold</div><div class="value" id="stat-hold">—</div></div>
     <div class="stat"><div class="label">waiting</div><div class="value" id="stat-wait">0</div></div>
     <div class="stat"><div class="label">prefill</div><div class="value v-blue" id="stat-pp">—</div></div>
     <div class="stat"><div class="label">decode</div><div class="value v-accent" id="stat-decode">—</div></div>
+    <div class="stat"><div class="label">engine reqs</div><div class="value" id="stat-reqs">0</div></div>
     <div class="stat"><div class="label">system</div><div class="value" id="stat-power">—</div></div>
     <div class="stat"><div class="label">RAM</div><div class="value" id="stat-ram">—</div></div>
     <div class="stat"><div class="label">VRAM</div><div class="value" id="stat-vram">—</div></div>
-    <div class="stat"><div class="label">requests</div><div class="value" id="stat-total">0</div></div>
   </div>
-  <div class="right"><button class="ghost" id="settings-toggle">⚙ settings</button></div>
 </header>
 
-<section id="settings">
-  <div class="field"><label>provider host</label><input id="cfg-host"></div>
-  <div class="field"><label>provider port</label><input id="cfg-port"></div>
-  <div class="field"><label>scheme</label><input id="cfg-scheme"></div>
-  <div class="field"><label>model names (proxy only)</label><input id="cfg-models"></div>
-  <button class="primary" id="cfg-save">save</button><div id="cfg-status"></div>
-</section>
-
-<section id="queue-strip"><div class="qs-title">request queue</div><div class="qboxes" id="queue-boxes"></div></section>
+<section id="queue-strip"><div class="qs-title">waitroom queue</div><div class="qboxes" id="queue-boxes"></div><span id="last-event"></span></section>
 
 <main id="ops">
   <div id="ops-tabs">
@@ -121,36 +107,19 @@
   </div>
 </main>
 
-<section id="panes">
-  <div class="pane"><div class="pane-header" id="prompt-header"><span>incoming prompts</span><span id="prompt-count">0</span></div><div class="pane-body" id="prompt-body"></div></div>
-  <div class="divider"></div>
-  <div class="pane"><div class="pane-header" id="response-header"><span>response stream</span><span id="response-count">0</span></div><div class="pane-body" id="response-body"></div></div>
-</section>
-
 <script>
 const $ = x => document.getElementById(String(x).replace(/^#/, ''));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (x,suf='') => x==null ? '—' : (Number.isFinite(+x) ? Math.round(+x*10)/10 : x)+suf;
 const bytes = x => { if(x==null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let n=+x,i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return Math.round(n*10)/10+' '+u[i]; };
-const secs = x => x==null ? '—' : x<1 ? Math.round(x*1000)+'ms' : (+x).toFixed(1)+'s';
 const state = {data:null, history:{samples:[]}, jobs:[], activeTab:'models', logTimer:null, jobTimer:null};
 
 function setStatus(sel, ok, text) { const d=$(sel); if(!d) return; d.classList.toggle('dot-ok', !!ok); d.title=text||''; }
-function updateStats(s) {
-  // Proxy-measured averages only exist for traffic routed *through* GlAIss; never
-  // let an empty proxy stat erase the engine-reported token speed.
-  if (s.avg_pp_tps != null) $('stat-pp').textContent = fmt(s.avg_pp_tps,' t/s');
-  if (s.avg_decode_tps != null) $('stat-decode').textContent = fmt(s.avg_decode_tps,' t/s');
-  $('stat-total').textContent = s.total_requests ?? 0; renderQueue(s.active_requests || [], state.data?.model);
-}
-function renderQueue(rs, m) {
-  const old = [...$('queue-boxes').children].filter(x=>x.classList.contains('finished')); const boxes=[];
-  rs.forEach(r => { const b=document.createElement('div'); b.className='qbox '+(r.phase==='queued'?'queued':'running'); b.dataset.req=r.id;
-    const pp = r.pp_seconds?r.prompt_tokens_est/r.pp_seconds:(r.est_pp_seconds?r.prompt_tokens_est/r.est_pp_seconds:null);
-    b.innerHTML = `<div class="a"><b>${esc(r.model)}</b><span class="small">${esc(r.id)} · ${esc(r.phase)}</span><button class="cancel" title="cancel">✕</button></div><div class="m"><span>in <b>${r.prompt_tokens_est??0}</b></span><span>gen <b>${r.tokens_generated??0}</b></span><span>pp <b>${fmt(pp)}</b></span><span>dec <b>${fmt(r.decode_tps)}</b></span></div>`;
-    b.querySelector('.cancel').onclick=()=>cancel(r.id); boxes.push(b); });
-  // The door's own arbiter: clients talk to :8080 directly, so the proxy list
-  // alone would leave this strip empty even with the queue busy.
+
+// The queue is the DOOR's arbiter (llpc/waitroom.py on :8080): the console is not
+// in the request path and deliberately shows no per-request prompt/response view.
+function renderQueue(m) {
+  const boxes=[];
   if (m) {
     if (m.active) { const b=document.createElement('div'); b.className='qbox running';
       b.innerHTML=`<div class="a"><b>${esc(m.active)}</b><span class="small">waitroom · serving</span></div><div class="m"><span>inflight <b>${m.inflight??0}</b></span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`; boxes.push(b); }
@@ -161,24 +130,25 @@ function renderQueue(rs, m) {
     if (!m.active && !(m.waiting||[]).length && !(m.hold_remaining_s > 0)) { const b=document.createElement('div'); b.className='qbox queued';
       b.innerHTML=`<div class="a"><b>${esc(m.current_loaded_model||m.loaded_model||'door idle')}</b><span class="small">waitroom · nothing queued</span></div>`; boxes.push(b); }
   }
-  $('queue-boxes').innerHTML=''; boxes.forEach(x=>$('queue-boxes').appendChild(x)); old.forEach(x=>$('queue-boxes').appendChild(x));
+  $('queue-boxes').innerHTML=''; boxes.forEach(x=>$('queue-boxes').appendChild(x));
 }
-function cancel(id){ const x=$('queue-boxes').querySelector(`[data-req="${CSS.escape(id)}"]`); if(x)x.remove(); fetch('/api/cancel/'+id,{method:'POST'}).catch(()=>{}); }
-function applyConfig(c){ $('cfg-host').value=c.provider_host; $('cfg-port').value=c.provider_port; $('cfg-scheme').value=c.provider_scheme; $('cfg-models').value=(c.models||[]).join(', '); $('stat-proxy').textContent=`${location.hostname}:${c.listen_port}`; }
-async function saveConfig(){ const body={provider_host:$('cfg-host').value.trim(),provider_port:+$('cfg-port').value,provider_scheme:$('cfg-scheme').value.trim()||'http',models:$('cfg-models').value.split(',').map(x=>x.trim()).filter(Boolean)}; $('cfg-status').textContent='saving…'; try{ await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}); $('cfg-status').textContent='saved ✓'; setTimeout(()=>$('cfg-status').textContent='',1500); } catch(e){ $('cfg-status').textContent='save failed'; } }
 
 function badge(x,cls,text){ return `<span class="badge ${cls}">${esc(text??x)}</span>`; }
 function renderMonitor(d) {
-  state.data=d; const s=d.system||{}, m=d.model||{}, t=d.traffic||{}; setStatus('#monitor-dot',(d.collectors||{}).waitroom?.ok,JSON.stringify(d.collectors||{}));
+  state.data=d; const s=d.system||{}, m=d.model||{}, cfg=d.config||{};
+  setStatus('#monitor-dot',(d.collectors||{}).waitroom?.ok,JSON.stringify(d.collectors||{}));
   $('stat-monitor').textContent = d.collectors?.waitroom?.ok ? 'connected' : 'degraded';
   $('stat-monitor').className='value '+(d.collectors?.waitroom?.ok?'v-accent':'v-err');
+  $('stat-door').textContent = cfg.waitroom_url ? String(cfg.waitroom_url).replace(/^https?:\/\//,'') : '—';
+  $('stat-door').title = `every client request goes to this door; GlAIss proxies nothing`;
   $('stat-loaded').textContent=m.current_loaded_model||m.loaded_model||'none'; $('stat-active').textContent=m.active||'idle';
   $('stat-hold').textContent=fmt(m.hold_remaining_s,'s'); $('stat-wait').textContent=(m.waiting||[]).length;
-  $('stat-pp').textContent=fmt(s.prefill_tps ?? t.avg_pp_tps,' t/s'); $('stat-decode').textContent=fmt(s.decode_tps ?? t.avg_decode_tps,' t/s');
+  $('stat-pp').textContent=fmt(s.prefill_tps,' t/s'); $('stat-decode').textContent=fmt(s.decode_tps,' t/s');
   const tpsNote=`source: ${s.token_speed_source||'—'} · engine: ${s.engine_phase||'idle'} · KV reuse: ${s.engine_cache_hit_rate!=null?Math.round(s.engine_cache_hit_rate*100)+'%':'—'}`;
   $('stat-pp').title=tpsNote; $('stat-decode').title=tpsNote;
+  $('stat-reqs').textContent = s.engine_requests ?? '—';
   $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W'); $('stat-ram').textContent=bytes(s.ram_used_bytes); $('stat-vram').textContent=bytes((s.vram_used_mib||0)*1048576);
-  updateStats(t); renderQueue(t.active_requests || [], m);
+  renderQueue(m);
   renderCurrent(d); renderModels(d); renderServices(d.services||[]); renderJobs((d.control||{}).jobs||[]); renderCharts();
 }
 function renderCurrent(d) {
@@ -194,14 +164,14 @@ function renderCurrent(d) {
   lane.innerHTML=`<div class="lanebox active"><small>ACTIVE</small><b>${esc(m.active||'idle')}</b><br><span class="small">${m.inflight??0} in flight</span></div>${waiting.map((w,i)=>`<div class="lanebox"><small>#${i+1}</small><b>${esc(w.model)}</b><br><span class="small">waited ${fmt(w.waited_s,'s')}</span></div>`).join('')||'<div class="lanebox"><small>WAITING</small>none</div>'}`;
   $('unlock-btn').disabled=!lock||busy; $('resume-auto').disabled=busy;
 }
-function modelActions(x){ const locked=x.locked, loaded=x.loaded, busy=state.jobs.some(y=>['queued','running'].includes(y.status)); const dis=x.unlisted?'disabled':'';
+function modelActions(x){ const locked=x.locked, busy=state.jobs.some(y=>['queued','running'].includes(y.status)); const dis=x.unlisted?'disabled':'';
  return `<div class="btns"><button class="mini" ${dis} onclick='loadModel(${JSON.stringify(x.name)},false)'>Load</button>
   <button class="mini warn" ${dis} onclick='loadModel(${JSON.stringify(x.name)},true)'>Load + lock</button>
   <button class="mini warn" ${dis} onclick='lockModel(${JSON.stringify(x.name)})'>Lock</button>
   <button class="mini" ${locked?'disabled':''} onclick='unloadModel(${JSON.stringify(x.name)})'>Unload</button></div>`;
 }
 function renderModels(d){ const rows=d.models||[]; $('model-count').textContent=rows.length; $('registry-status').textContent=d.collectors?.registry?.error||`${rows.length} models · ${d.collectors?.gpu?.ok?'GPUs ok':'GPU collector degraded'}`;
- $('models-body').innerHTML=rows.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.unlisted?' <span class="small">unlisted</span>':''}<div class="small">${(x.aliases||[]).slice(0,3).map(esc).join(' · ')}</div></td><td>${esc(x.unit||'?')}<div class="small">:${x.port||'?'} · ${x.text===false?'media':'text'}</div></td><td>${x.loaded?badge('loaded','loaded'):''} ${x.locked?badge('locked','locked'):badge('idle','')}${x.model?'':''}<div class="small">${esc(x.current_version||'')}</div></td><td>${modelActions(x)}</td></tr>`).join('')||'<tr><td colspan=4>No registry models found.</td></tr>';
+ $('models-body').innerHTML=rows.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.unlisted?' <span class="small">unlisted</span>':''}<div class="small">${(x.aliases||[]).slice(0,3).map(esc).join(' · ')}</div></td><td>${esc(x.unit||'?')}<div class="small">:${x.port||'?'} · ${x.text===false?'media':'text'}</div></td><td>${x.loaded?badge('loaded','loaded'):''} ${x.locked?badge('locked','locked'):badge('idle','')}<div class="small">${esc(x.current_version||'')}</div></td><td>${modelActions(x)}</td></tr>`).join('')||'<tr><td colspan=4>No registry models found.</td></tr>';
 }
 function renderServices(rows){ $('service-count').textContent=rows.length; $('services-body').innerHTML=rows.map(r=>{ const logs=r.logs||{}, err=logs.error||0, warn=logs.warn||0; return `<tr><td><b>${esc(r.display)}</b><div class="small">${esc(r.display_label||r.unit||'synthetic process')}</div></td><td>${badge(r.state, ['active','process-active'].includes(r.state)?'loaded':(r.state==='inactive'?'':'error'))}<div class="small">${esc(r.sub_state||'')} · ${r.restarts??0} restarts</div></td><td class="num">${r.main_pid||'—'}</td><td class="num">${fmt(r.cpu_percent,'%')}</td><td class="num">${fmt(r.rss_mib,' MiB')}</td><td class="num">${fmt(r.vram_mib,' MiB')}</td><td class="num ${err?'v-err':warn?'v-warn':''}">${err}/${warn}</td><td class="small" title="${esc((logs.last||{}).text||'')}">${esc(((logs.last||{}).text||'—').slice(0,100))}</td></tr>`}).join('');
   const sel=$('log-unit'); if(!sel.options.length||sel.options.length===1){ rows.forEach(r=>{const o=document.createElement('option');o.value=r.display;o.textContent=r.display;sel.appendChild(o)}); ['model-waitroom','llama-server'].forEach(u=>{if(!rows.some(r=>r.display===u)){const o=document.createElement('option');o.value=u;o.textContent=u;sel.appendChild(o)}}); }
@@ -210,6 +180,8 @@ function renderJobs(jobs){ state.jobs=jobs||[]; const running=jobs.find(x=>['que
   document.querySelectorAll('.mini').forEach(x=>x.disabled=!!running); $('unlock-btn').disabled=!state.data?.model?.lock||!!running; $('resume-auto').disabled=!!running;
 }
 async function post(path,body){ const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d?.error?.message||d?.detail||r.statusText); renderJobs(d.job?[d.job]:state.jobs); setTimeout(poll,300); return d; }
+// Every model move goes through swap-to.sh on the server (/api/control/*), which
+// is the same path the CLI uses; the console never starts or stops a unit itself.
 window.loadModel=async (name,lock)=>{ if(!confirm(lock?`Load and LOCK ${name}? The waitroom will reject other models until unlocked.`:`Load ${name}? This may swap the currently loaded model.`))return; try{await post('/api/control/load',{model:name,lock_after_load:lock})}catch(e){alert(e.message)} };
 window.unloadModel=async name=>{ if(!confirm(`Unload ${name}? This stops the serving unit unless a backstop re-adopts it.`))return; try{await post('/api/control/unload',{model:name})}catch(e){ if(!confirm(e.message+' Retry as a force/break-lock emergency action?'))return; try{await post('/api/control/unload',{model:name,force:true,break_lock:true})}catch(e2){alert(e2.message)} } };
 window.lockModel=async name=>{ if(!confirm(`Lock ${name}? Requests for other models will be rejected.`))return; try{await post('/api/control/lock',{model:name,load_if_needed:true})}catch(e){alert(e.message)} };
@@ -218,30 +190,30 @@ $('resume-auto').onclick=async()=>{if(confirm('Resume automatic residency and cl
 $('refresh-state').onclick=poll;
 
 async function pollLogs(){ const q=new URLSearchParams({limit:500}); if($('log-unit').value)q.set('unit',$('log-unit').value); if($('log-level').value)q.set('level',$('log-level').value); try{const d=await(await fetch('/api/logs?'+q)).json(); $('log-status').textContent=d.status?.running?`journal follow active · ${d.logs.length} shown`:'journal collector not running'; $('log-box').innerHTML=d.logs.map(x=>`<div class="log ${x.severity}"><span class="time">${new Date(x.ts*1000).toLocaleTimeString()}</span><span class="unit">${esc((x.unit||[]).join(','))}</span>${esc(x.text)}</div>`).join(''); }catch(e){$('log-status').textContent='logs unavailable';} }
-function drawChart(id,samples,key,color,scaleTotal){ const c=$(id), dpr=devicePixelRatio||1; c.width=c.clientWidth*dpr;c.height=c.clientHeight*dpr; const g=c.getContext('2d'); g.scale(dpr,dpr); const w=c.clientWidth,h=c.clientHeight; g.clearRect(0,0,w,h); const xs=(state.history.samples||[]); if(!xs.length)return; const vals=xs.map(x=>x[key]).filter(v=>v!=null); if(vals.length<2)return; const max=scaleTotal||Math.max(...vals,1), min=0; g.strokeStyle='#272e38';g.lineWidth=1; for(let i=0;i<=3;i++){let y=h-(i/3)*h;g.beginPath();g.moveTo(34,y);g.lineTo(w-4,y);g.stroke();g.fillStyle='#667281';g.fillText(Math.round(max*i/3),0,y-3)} g.beginPath(); xs.forEach((x,i)=>{const v=x[key]; if(v==null)return; const px=34+(i/(xs.length-1))*(w-38), py=h-((v-min)/(max-min||1))*(h-10); i?g.lineTo(px,py):g.moveTo(px,py)}); g.strokeStyle=color;g.lineWidth=2;g.stroke(); }
+function drawChart(id,key,color,scaleTotal){ const c=$(id), dpr=devicePixelRatio||1; c.width=c.clientWidth*dpr;c.height=c.clientHeight*dpr; const g=c.getContext('2d'); g.scale(dpr,dpr); const w=c.clientWidth,h=c.clientHeight; g.clearRect(0,0,w,h); const xs=(state.history.samples||[]); if(!xs.length)return; const vals=xs.map(x=>x[key]).filter(v=>v!=null); if(vals.length<2)return; const max=scaleTotal||Math.max(...vals,1), min=0; g.strokeStyle='#272e38';g.lineWidth=1; for(let i=0;i<=3;i++){let y=h-(i/3)*h;g.beginPath();g.moveTo(34,y);g.lineTo(w-4,y);g.stroke();g.fillStyle='#667281';g.fillText(Math.round(max*i/3),0,y-3)} g.beginPath(); xs.forEach((x,i)=>{const v=x[key]; if(v==null)return; const px=34+(i/(xs.length-1))*(w-38), py=h-((v-min)/(max-min||1))*(h-10); i?g.lineTo(px,py):g.moveTo(px,py)}); g.strokeStyle=color;g.lineWidth=2;g.stroke(); }
 function renderCharts(){ if(state.activeTab!=='metrics')return; const x=state.history.samples||[], last=x[x.length-1]||{}; $('power-now').textContent=fmt(last.system_power_w,' W'); $('tps-now').textContent=`dec ${fmt(last.decode_tps)} · pp ${fmt(last.prefill_tps)}`; $('ram-now').textContent=bytes(last.ram_used_bytes); $('vram-now').textContent=`${fmt(last.vram_used_mib,' MiB')}`;
-  drawChart('power-chart',x,'system_power_w','#e0ad43'); drawChart('tps-chart',x,'decode_tps','#42d3a3'); drawChart('ram-chart',x,'ram_used_bytes','#5aa9e6',last.ram_total_bytes); drawChart('vram-chart',x,'vram_used_mib','#c07de6',last.vram_total_mib);
+  drawChart('power-chart','system_power_w','#e0ad43'); drawChart('tps-chart','decode_tps','#42d3a3'); drawChart('ram-chart','ram_used_bytes','#5aa9e6',last.ram_total_bytes); drawChart('vram-chart','vram_used_mib','#c07de6',last.vram_total_mib);
 }
 async function poll(){ try{const d=await(await fetch('/api/state')).json(); renderMonitor(d); const h=await(await fetch('/api/history?seconds=900')).json(); state.history=h; renderCharts();}catch(e){setStatus('#monitor-dot',false,e.message); $('stat-monitor').textContent='down';} }
 
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.tabpane').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.activeTab=b.dataset.tab;$('pane-'+state.activeTab).classList.add('active'); if(state.activeTab==='metrics')renderCharts(); if(state.activeTab==='logs')pollLogs();});
-$('settings-toggle').onclick=()=>$('settings').classList.toggle('open'); $('cfg-save').onclick=saveConfig; $('log-unit').onchange=pollLogs; $('log-level').onchange=pollLogs; $('log-follow').onchange=()=>state.logTimer&&clearInterval(state.logTimer);
+$('log-unit').onchange=pollLogs; $('log-level').onchange=pollLogs; $('log-follow').onchange=()=>state.logTimer&&clearInterval(state.logTimer);
 window.addEventListener('resize',renderCharts);
 async function followLogs(){ if(state.activeTab==='logs'&&$('log-follow').checked) pollLogs(); }
 setInterval(poll,2000); setInterval(followLogs,3000);
-let ws; function connectWS(){ const p=location.protocol==='https:'?'wss':'ws'; ws=new WebSocket(`${p}://${location.host}/ws`); ws.onopen=()=>setStatus('#ws-dot',true,'proxy websocket connected'); ws.onclose=()=>{setStatus('#ws-dot',false,'reconnecting'); setTimeout(connectWS,1500)}; ws.onmessage=e=>{const m=JSON.parse(e.data); if(m.type==='stats')updateStats(m); else if(m.type==='config')applyConfig(m.config); else if(m.type==='monitor'){if(state.data)renderMonitor(Object.assign({},state.data,m));} else if(m.type==='control_job'){renderJobs([m.job,...state.jobs.filter(x=>x.id!==m.job.id)]); poll();}}; }
-fetch('/api/config').then(r=>r.json()).then(applyConfig).catch(()=>{}); connectWS(); poll(); pollLogs();
-/* request log renderer (preserved from original GlAIss) */
-const promptBody=$('prompt-body'), responseBody=$('response-body'); let openResponses={}, pCount=0,rCount=0;
-function trim(x,m){while(x.children.length>m)x.removeChild(x.firstChild)}
-function roleClass(x){return x==='system'?'role-system':x==='user'?'role-user':x==='assistant'?'role-assistant':''}
-function promptHtml(t){return t.split('\n').map(l=>{const m=l.match(/^\[(\w+)\]\s?([\s\S]*)$/); return m?`<span class="${roleClass(m[1])}">[${esc(m[1])}]</span> ${esc(m[2])}`:esc(l)}).join('<br>')}
-function handlePrompt(m){const d=document.createElement('div');d.className='entry prompt-card';let body = m.is_diff&&m.repeated_len>0?`<details><summary class="small">↻ ${m.repeated_len} repeated chars</summary>${promptHtml(m.text.slice(0,m.repeated_len))}</details>${promptHtml(m.text.slice(m.repeated_len))}`:promptHtml(m.text);d.innerHTML=`<div class="entry-meta"><span class="idtag">${esc(m.id)}</span>${esc(m.model)} ~${m.prompt_tokens_est} tok ${m.is_diff?'<span class=diff-badge>diff</span>':''}<span>${new Date(m.ts*1000).toLocaleTimeString()}</span></div>${body}<div class="prompt-stats" data-req="${esc(m.id)}"><span>PP <b class=pp>…</b></span><span>dec <b class=dec>…</b></span><span>out <b class=out>…</b></span></div>`;promptBody.appendChild(d);promptCount.textContent=++pCount;trim(promptBody,300);promptBody.scrollTop=promptBody.scrollHeight}
-function handleEvent(m){const d=document.createElement('div');d.className='entry small';d.textContent=`${m.type==='started'?'▶ started · waited '+secs(m.wait_seconds):'⏳ queued · position '+m.position} · ${m.id}`;promptBody.appendChild(d);trim(promptBody,300)}
-function handleResponse(m){let e=openResponses[m.id];if(!e){e=document.createElement('div');e.className='entry';e.innerHTML=`<span class="idtag">${esc(m.id)}</span><details class="thinking-block"><summary>thinking</summary><span class="thinking-text"></span></details><span class="text"></span>`;responseBody.appendChild(e);openResponses[m.id]=e;responseCount.textContent=++rCount}
- if(m.done){if(m.reasoning){const t=e.querySelector('.thinking-block');t.style.display='block';t.querySelector('.thinking-text').textContent=m.reasoning}if(m.text)e.querySelector('.text').textContent=m.text;const x=promptBody.querySelector(`.prompt-stats[data-req="${CSS.escape(m.id)}"]`); if(x){if(m.pp_seconds!=null)x.querySelector('.pp').textContent=secs(m.pp_seconds); if(m.final_decode_tps)x.querySelector('.dec').textContent=fmt(m.final_decode_tps,' t/s'); if(m.tokens_generated)x.querySelector('.out').textContent=m.tokens_generated+' tok'}delete openResponses[m.id]}
- else if(m.text){if(m.kind==='thinking'){const t=e.querySelector('.thinking-block');t.style.display='block';t.querySelector('.thinking-text').append(m.text)}else e.querySelector('.text').append(m.text)}trim(responseBody,300);responseBody.scrollTop=responseBody.scrollHeight}
-const oldWSHandler=ws.onmessage; ws.onmessage=e=>{const m=JSON.parse(e.data); if(m.type==='history_start'){promptBody.innerHTML='';responseBody.innerHTML='';pCount=rCount=0;openResponses={}} else if(m.type==='prompt')handlePrompt(m); else if(m.type==='response')handleResponse(m); else if(m.type==='queued'||m.type==='started')handleEvent(m); else oldWSHandler(e);}
+
+// Console channel: monitor snapshots, control jobs and door events pushed by the
+// server. Nothing request-level ever crosses here — the door owns the traffic.
+function connectWS(){ const p=location.protocol==='https:'?'wss':'ws'; const ws=new WebSocket(`${p}://${location.host}/ws`);
+  ws.onopen=()=>{ setStatus('#ws-dot',true,'console websocket connected'); $('stat-live').textContent='live'; };
+  ws.onclose=()=>{ setStatus('#ws-dot',false,'reconnecting'); $('stat-live').textContent='reconnecting'; setTimeout(connectWS,1500); };
+  ws.onmessage=e=>{ const m=JSON.parse(e.data);
+    if(m.type==='monitor'){ if(state.data) renderMonitor(Object.assign({},state.data,m)); }
+    else if(m.type==='control_job'){ renderJobs([m.job,...state.jobs.filter(x=>x.id!==m.job.id)]); poll(); }
+    else if(m.type==='waitroom_event'){ const ev=m.event||{}; $('last-event').textContent=`door: ${ev.type||'?'} ${ev.model||''}`.trim(); if(state.activeTab==='logs') pollLogs(); }
+  };
+}
+connectWS(); poll(); pollLogs();
 </script>
 </body>
 </html>

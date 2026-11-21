@@ -1,5 +1,5 @@
 [Unit]
-Description=GlAIss waitroom observability and manual model-control console on :8899
+Description=GlAIss console for the llpc waitroom (observability + manual model control) on :8899
 Documentation=https://github.com/SpencerGraffunder/GlAIss
 After=network-online.target model-waitroom.service
 Wants=network-online.target
@@ -10,9 +10,6 @@ Type=simple
 User=graffunder
 WorkingDirectory=/opt/glaiss
 Environment=GLAISS_STATE_DIR=/var/lib/glaiss
-Environment=GLAISS_PROVIDER_HOST=127.0.0.1
-Environment=GLAISS_PROVIDER_PORT=8080
-Environment=GLAISS_PROVIDER_SCHEME=http
 Environment=LLPC_HOME=/home/graffunder
 Environment=LLPC_SWAP_DIR=/home/graffunder/llama-swap
 Environment=LLPC_STATE_DIR=/home/graffunder/.llama-swap

@@ -1,20 +1,29 @@
 # GlAIss
 
-GlAIss is the llpc inference operations console. It combines the original
-transparent LLM proxy window with the live `model-waitroom` queue and llama-swap
-model control.
+GlAIss is the llpc inference operations console: a read-only window onto the
+running stack plus manual model control. **It is not in the request path.** The
+repo contains exactly one proxy — the llpc waitroom door (`llpc/waitroom.py`,
+`:8080`) — and every client talks to that door directly.
+
+The original GlAIss transparent proxy that used to sit in front of the door was
+removed on 2026-11-21 (Spec's call): two proxies in one repo meant two routing
+brains, two sets of token stats, and a console whose traffic panels were empty
+because real clients never went through it. `test_single_proxy.py` keeps it gone.
 
 The web UI has **no login, MFA, or authorization layer by design**. It is an
 admin-only operations surface and is expected to be reachable only through the
-trusted VPN network.
+trusted VPN network (in practice: Cloudflare Access on
+`glaiss.nuclearquads.com`).
 
 ## What it shows
 
-- Original GlAIss request queue, FIFO position, prefill estimate, real decode
-  t/s, streaming response text, and reasoning stream.
 - llpc waitroom state: loaded model, active arbiter model, in-flight requests,
   ordered waiting models, swap hysteresis, quantum timer, handoffs, Comfy claim,
   intent, manual lock, and manual-control suppression.
+- Token speed measured **by the engine** (`GET /metrics` on the loaded model's
+  port): decode t/s, prefill recompute rate, KV-cache reuse, engine phase. The
+  console cannot measure traffic it does not carry, so there is no proxy-side
+  estimate any more.
 - Per-service rows matching the standard llpc journal command:
 
   `journalctl -u strata31 -u llama-qwen -u comfy-ui -u llama-swap -u whisper-server -u whisper-shim -u switcheroo-control -u model-waitroom -u strata-dsv41.service -u llama-server`
@@ -28,25 +37,29 @@ trusted VPN network.
 ## Architecture
 
 ```text
-clients -> GlAIss :8899 -> llpc waitroom :8080 -> llama-swap :8090 -> engine
-                         -> monitor/control router
-                         -> journal + RAPL + nvidia-smi + llama-swap + registry
+clients ──────────────────────────────> llpc waitroom :8080 -> llama-swap :8090 -> engine
+                                              │  (the only proxy in the repo)
+                                              │ events (/internal/waitroom/events)
+llpc state files, systemd, nvidia-smi, RAPL, engine /metrics
+                                              │
+                        GlAIss console :8899 (observe + manual control only)
 ```
 
-The proxy remains transparent for inference. Monitor routes are mounted before
-the proxy catch-all. `WAITROOM_URL` defaults to `http://127.0.0.1:8080`;
-monitoring llama-swap directly at `LLAMA_SWAP_URL` is read-only and used for
-running state and manual unload operations.
+The console answers `/`, `/ws`, `/api/*` and `/internal/waitroom/events`, and
+**404s everything else** — there is no catch-all, no provider host/port, and no
+route that accepts inference traffic. `WAITROOM_URL` defaults to
+`http://127.0.0.1:8080`; llama-swap at `LLAMA_SWAP_URL` is used read-only for
+running state and for the manual unload call.
 
 ```text
 glaiss.py                      runtime entrypoint
-glaiss_app/proxy.py            original FIFO proxy and websocket log
+glaiss_app/console.py          static page, websocket fan-out (no forwarding)
 glaiss_app/monitor.py          monitor/control router and model-control jobs
-glaiss_app/collectors.py       waitroom, systemd, GPU, RAPL, RAM collectors
+glaiss_app/collectors.py       waitroom, systemd, GPU, RAPL, RAM, engine-metrics collectors
 glaiss_app/journal.py          journalctl follow ring
 glaiss_app/model_state.py      shared manual-lock/manual-control file format
 glaiss_app/static/index.html   operations console
-llpc/waitroom.py               llpc source of truth, with GlAIss event feed
+llpc/waitroom.py               THE PROXY: llpc source of truth, with GlAIss event feed
 llpc/model_control.py          CLI with the same lock/inflight guards
 systemd/                       canonical unit files
 scripts/install.sh             local deployment helper
@@ -116,9 +129,7 @@ access to `http://<llpc-address>:8899/` still works for local debugging.
 | `GLAISS_STATE_DIR` | repo directory | writable config directory |
 | `GLAISS_LISTEN_PORT` | config/8899 | listen port override |
 | `GLAISS_ENGINE_METRICS_TIMEOUT` | `4` | seconds for the engine `/metrics` fetch (token speed) |
-| `GLAISS_PROVIDER_HOST` | `127.0.0.1` | proxy destination |
-| `GLAISS_PROVIDER_PORT` | config/8080 | proxy destination port |
-| `WAITROOM_URL` | `http://127.0.0.1:8080` | monitor source |
+| `WAITROOM_URL` | `http://127.0.0.1:8080` | monitor source (the door; not a forwarding target) |
 | `LLAMA_SWAP_URL` | `http://127.0.0.1:8090` | running state and unload API |
 | `LLPC_MODELS_PY` | `~/llama-swap/llpc_models.py` | model registry |
 | `GLAISS_MONITOR_POLL_S` | `2` | collector interval |
@@ -126,6 +137,8 @@ access to `http://<llpc-address>:8899/` still works for local debugging.
 
 ## API
 
+- `GET /` — console page
+- `GET /ws` — websocket: `monitor`, `control_job`, `waitroom_event` pushes
 - `GET /api/health`
 - `GET /api/state`
 - `GET /api/history?seconds=900`
@@ -140,12 +153,18 @@ access to `http://<llpc-address>:8899/` still works for local debugging.
 - `POST /api/control/unlock`
 - `POST /api/control/resume_auto`
 
+Anything else — including `/v1/chat/completions` — is a 404. If you ever need
+inference traffic, that is the door's job on `:8080`.
+
 ## Tests
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-Tests cover FIFO serialization, cancellation, prompt diffing, history replay,
-monitor route precedence, waitroom event fan-out, hysteresis/lock state, and
-manual-control guards. No test starts, loads, or stops a production model.
+Tests cover the single-proxy rule (`test_single_proxy.py`), the console page's
+DOM/JS contract (`test_ui_contract.py`), engine token-speed parsing
+(`test_engine_metrics.py`), monitor routes and waitroom event fan-out,
+hysteresis/lock state, and manual-control guards. The waitroom's own 102-check
+suite runs standalone: `python3 llpc/test_waitroom.py`. No test starts, loads,
+or stops a production model.

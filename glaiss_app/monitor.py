@@ -1,4 +1,9 @@
-"""FastAPI monitor/control endpoints for GlAIss + llpc waitroom."""
+"""FastAPI monitor/control endpoints for the GlAIss console.
+
+Mounted onto ``glaiss_app.console.app`` by :func:`install`. Nothing here forwards
+client traffic: reads come from the collectors, writes go to the model-state files
+and ``swap-to.sh``.
+"""
 
 from __future__ import annotations
 
@@ -57,7 +62,6 @@ class History:
     def add(self, snapshot: Dict[str, Any]) -> None:
         system = snapshot.get("system", {}) or {}
         model = snapshot.get("model", {}) or {}
-        traffic = snapshot.get("traffic", {}) or {}
         self.samples.append({
             "ts": snapshot.get("time", time.time()),
             "cpu_power_w": system.get("cpu_power_w"),
@@ -73,8 +77,9 @@ class History:
             "hold_remaining_s": model.get("hold_remaining_s"),
             "inflight": model.get("inflight"),
             "waiting": len(model.get("waiting") or []),
-            "decode_tps": system.get("decode_tps") if system.get("decode_tps") is not None else traffic.get("avg_decode_tps"),
-            "prefill_tps": system.get("prefill_tps") if system.get("prefill_tps") is not None else traffic.get("avg_pp_tps"),
+            # Engine-reported only: the console is not in the request path.
+            "decode_tps": system.get("decode_tps"),
+            "prefill_tps": system.get("prefill_tps"),
             "token_speed_source": system.get("token_speed_source"),
         })
 
@@ -89,7 +94,7 @@ class ControlManager:
         self.jobs: Dict[str, ControlJob] = {}
 
     async def broadcast(self, msg: Dict[str, Any]) -> None:
-        hub = getattr(self.monitor.proxy, "hub", None)
+        hub = self.monitor.hub()
         if hub:
             try:
                 await hub.emit(msg)
@@ -258,8 +263,8 @@ class ControlManager:
 
 
 class Monitor:
-    def __init__(self, proxy_module):
-        self.proxy = proxy_module
+    def __init__(self, app_module):
+        self.app_module = app_module
         self.cache = C.CollectorCache()
         self.journal = J.JournalRing()
         self.history = History(maxlen=int(os.environ.get("GLAISS_HISTORY_SAMPLES", "1800")))
@@ -270,6 +275,10 @@ class Monitor:
         self.last_refresh = 0.0
         self.last_refresh_error: Optional[str] = None
         self.running = False
+
+    def hub(self):
+        """Console websocket fan-out (None in tests that mount no console app)."""
+        return getattr(self.app_module, "hub", None)
 
     async def snapshot(self) -> Dict[str, Any]:
         now = time.time()
@@ -333,17 +342,15 @@ class Monitor:
                 "visible_in_picker": not bool(m.get("unlisted")),
             })
 
-        # Token speed comes from the engine itself: real clients talk to the
-        # waitroom directly, so the proxy's own averages are usually empty.
+        # Token speed comes from the engine itself. The console is not in the
+        # request path (the waitroom door is the only proxy), so this is the only
+        # place a real t/s number can come from.
         loaded_row = C.resolve_registry_model(self.registry_models, current_loaded_model or "") or {}
         engine = await C.engine_metrics(loaded_row.get("port"), C.read_llama_swap_key())
-
-        traffic_snap = self.proxy.stats.snapshot() if hasattr(self.proxy, "stats") else {}
-        decode_tps = engine.get("decode_tps") or traffic_snap.get("avg_decode_tps")
-        prefill_tps = engine.get("prefill_tps") or traffic_snap.get("avg_pp_tps")
+        decode_tps = engine.get("decode_tps")
+        prefill_tps = engine.get("prefill_tps")
         tps_source = engine.get("source") if engine.get("ok") and (
-            engine.get("decode_tps") or engine.get("prefill_tps")) else (
-            "proxy" if (decode_tps or prefill_tps) else None)
+            decode_tps or prefill_tps) else None
 
         snap = {
             "time": now,
@@ -396,11 +403,11 @@ class Monitor:
                 "engine_phase": engine.get("phase"),
                 "engine_prompt_tokens": engine.get("prompt_tokens"),
                 "engine_cache_hit_rate": engine.get("cache_hit_rate"),
+                "engine_requests": engine.get("lifetime_requests"),
                 "gpus": gpus,
             },
             "services": services,
             "engine": engine,
-            "traffic": traffic_snap,
             "control": {"jobs": [j.as_dict() for j in sorted(self.control.jobs.values(), key=lambda x: x.created_at, reverse=True)[:30]]},
             "config": {
                 "waitroom_url": C.WAITROOM_URL,
@@ -428,7 +435,7 @@ class Monitor:
             try:
                 snap = await self.snapshot()
                 self.history.add(snap)
-                hub = getattr(self.proxy, "hub", None)
+                hub = self.hub()
                 if hub and hub.clients:
                     lightweight = {
                         "type": "monitor",
@@ -451,9 +458,14 @@ class Monitor:
         self.running = False
 
 
-def install(proxy_module) -> None:
-    app = proxy_module.app
-    monitor = Monitor(proxy_module)
+def install(app_module) -> None:
+    """Mount the monitor/control routes on the console app.
+
+    There is no catch-all route to order these around any more: the console
+    answers its own ``/api/*``, ``/ws`` and ``/`` and 404s everything else.
+    """
+    app = app_module.app
+    monitor = Monitor(app_module)
     setattr(app.state, "glaiss_monitor", monitor)
     control = monitor.control
 
@@ -493,7 +505,7 @@ def install(proxy_module) -> None:
     @router.get("/api/system")
     async def api_system():
         snap = await monitor.refresh_now(force=True)
-        return {"system": snap.get("system"), "traffic": snap.get("traffic")}
+        return {"system": snap.get("system"), "engine": snap.get("engine")}
 
     @router.get("/api/logs")
     async def api_logs(limit: int = 300, unit: Optional[str] = None, level: Optional[str] = None):
@@ -533,7 +545,7 @@ def install(proxy_module) -> None:
             "COMM": "waitroom-event",
             "MESSAGE": f"event {payload.get('type', 'unknown')} model={payload.get('model', '')} id={payload.get('req_id', '')}",
         }))
-        hub = getattr(proxy_module, "hub", None)
+        hub = monitor.hub()
         if hub:
             await hub.emit({"type": "waitroom_event", "event": payload, "ts": time.time()})
         return {"ok": True}
@@ -587,16 +599,11 @@ def install(proxy_module) -> None:
         result = await control.resume_auto()
         return JSONResponse(result)
 
-    catch_routes = [r for r in app.router.routes if getattr(r, "path", None) == "/{full_path:path}"]
-    for route in catch_routes:
-        app.router.routes.remove(route)
-
     before = list(app.router.routes)
     app.include_router(router)
+    # Console routes first: they must win over anything the console app itself adds.
     new_routes = list(app.router.routes)[len(before):]
     app.router.routes = new_routes + before
-    for route in catch_routes:
-        app.router.routes.append(route)
 
     enabled_tasks = os.environ.get("GLAISS_DISABLE_MONITOR_TASKS", "").lower() not in {"1", "true", "yes"}
 

@@ -8,41 +8,36 @@ from fastapi.testclient import TestClient
 from glaiss_app import collectors, monitor, model_state as state
 
 
-class ProxyLike:
+class ConsoleLike:
+    """Stand-in for glaiss_app.console: an app plus the websocket fan-out."""
+
     def __init__(self):
         self.app = FastAPI()
-        self.stats = type("S", (), {"snapshot": staticmethod(lambda: {"avg_decode_tps": 1, "avg_pp_tps": 2})})()
-        self.hub = None
-        self.app.catchalls = []
-
-    def register_catchall(self):
-        @self.app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-        async def catch(full_path: str):
-            return {"via": "proxy", "path": full_path}
+        self.hub: object | None = None
 
 
 def make_monitor(tmp_path: Path, monkeypatch):
     for attr in ("DEFAULT_LOCK_FILE", "DEFAULT_MANUAL_FILE"):
         monkeypatch.setattr(state, attr, tmp_path / attr.lower())
-    p = ProxyLike()
-    p.register_catchall()
-    monitor.install(p)
-    m = p.app.state.glaiss_monitor
+    c = ConsoleLike()
+    monitor.install(c)
+    m = c.app.state.glaiss_monitor
     m.registry_models = [
         {"name": "Text A", "aliases": ["a"], "unit": "unit-a", "text": True, "port": 8085},
         {"name": "Media B", "aliases": ["b"], "unit": "unit-b", "text": False, "port": 8188},
     ]
-    return p, m
+    return c, m
 
 
-def test_monitor_routes_run_before_proxy_catchall(tmp_path, monkeypatch):
-    p, _ = make_monitor(tmp_path, monkeypatch)
-    with TestClient(p.app) as c:
-        health = c.get("/api/health")
+def test_console_routes_are_its_own_and_unknown_paths_404(tmp_path, monkeypatch):
+    """The console answers /api/* and 404s everything else — it forwards nothing."""
+    c, _ = make_monitor(tmp_path, monkeypatch)
+    with TestClient(c.app) as client:
+        health = client.get("/api/health")
         assert health.status_code == 200
         assert health.json()["ok"] is True
-        proxied = c.get("/some/backend/path")
-        assert proxied.json() == {"via": "proxy", "path": "some/backend/path"}
+        assert client.get("/v1/chat/completions").status_code == 404
+        assert client.get("/some/backend/path").status_code == 404
 
 
 def test_monitor_history_and_lock_state(tmp_path, monkeypatch):
@@ -57,9 +52,16 @@ def test_monitor_history_and_lock_state(tmp_path, monkeypatch):
     async def fake_registry():
         return m.registry_models, None
 
+    async def fake_engine(port, key=None):
+        assert port == 8085, "token speed must be read from the loaded model's engine"
+        return {"ok": True, "error": None, "decode_tps": 64.2, "prefill_tps": 102.9,
+                "phase": "generating", "cache_hit_rate": 0.68,
+                "lifetime_requests": 4100, "source": "engine/metrics"}
+
     monkeypatch.setattr(collectors, "registry_models", fake_registry)
     monkeypatch.setattr(collectors, "waitroom_snapshot", fake_waitroom)
     monkeypatch.setattr(collectors, "llama_swap_running", fake_running)
+    monkeypatch.setattr(collectors, "engine_metrics", fake_engine)
 
     async def scenario():
         snap = await m.snapshot()
@@ -69,8 +71,13 @@ def test_monitor_history_and_lock_state(tmp_path, monkeypatch):
     snap = asyncio.run(scenario())
     assert snap["model"]["current_loaded_model"] == "Text A"
     assert snap["models"][0]["loaded"] is True
-    assert snap["traffic"]["avg_decode_tps"] == 1
+    assert snap["system"]["decode_tps"] == 64.2
+    assert snap["system"]["prefill_tps"] == 102.9
+    assert snap["system"]["token_speed_source"] == "engine/metrics"
+    assert snap["system"]["engine_requests"] == 4100
+    assert "traffic" not in snap, "no proxy traffic block in a console-only repo"
     assert m.history.samples[-1]["loaded_model"] == "Text A"
+    assert m.history.samples[-1]["decode_tps"] == 64.2
 
 
 def test_control_lock_and_inflight_guards(tmp_path, monkeypatch):
@@ -105,9 +112,9 @@ def test_event_endpoint_feeds_journal_and_hub(tmp_path, monkeypatch):
         async def emit(self, msg):
             self.messages.append(msg)
 
-    p, m = make_monitor(tmp_path, monkeypatch)
+    c, m = make_monitor(tmp_path, monkeypatch)
     hub = FakeHub()
-    p.hub = hub
+    c.hub = hub
     m.journal.add(json.dumps({
         "__REALTIME_TIMESTAMP": "0",
         "UNIT": "model-waitroom",
@@ -115,8 +122,8 @@ def test_event_endpoint_feeds_journal_and_hub(tmp_path, monkeypatch):
         "COMM": "seed",
         "MESSAGE": "seed",
     }))
-    with TestClient(p.app) as c:
-        r = c.post("/internal/waitroom/events", json={"type": "arbiter_handoff", "model": "Text A"})
+    with TestClient(c.app) as client:
+        r = client.post("/internal/waitroom/events", json={"type": "arbiter_handoff", "model": "Text A"})
         assert r.status_code == 200
     assert hub.messages[-1]["event"]["model"] == "Text A"
     assert any("arbiter_handoff" in x["text"] for x in m.journal.tail())
@@ -144,7 +151,7 @@ def test_state_endpoint_serializes_with_journal_data(tmp_path, monkeypatch):
     """The combined /api/state payload must render once journal records exist."""
     from fastapi.testclient import TestClient
 
-    p, m = make_monitor(tmp_path, monkeypatch)
+    c, m = make_monitor(tmp_path, monkeypatch)
     m.journal.add(json.dumps({
         "__REALTIME_TIMESTAMP": "1700000000000000",
         "UNIT": "comfyui",
@@ -152,7 +159,7 @@ def test_state_endpoint_serializes_with_journal_data(tmp_path, monkeypatch):
         "COMM": "python3",
         "MESSAGE": "boom",
     }))
-    with TestClient(p.app) as c:
-        r = c.get("/api/state")
+    with TestClient(c.app) as client:
+        r = client.get("/api/state")
         assert r.status_code == 200, r.text[:400]
         assert "services" in r.json()

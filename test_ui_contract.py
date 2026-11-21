@@ -46,8 +46,16 @@ def test_lookup_results_are_guarded_where_optional():
         "setStatus must no-op on a missing element rather than throw"
 
 
-def test_response_cache_is_not_a_const():
-    """history_start resets the cache; a const there aborts the WS handler."""
+def test_no_proxy_era_survivors():
+    """The page must not reference the deleted proxy's routes or panes."""
+    html, js = _html_and_js()
+    for token in ("/api/cancel", "/api/config", "provider_host", "prompt-body",
+                  "response-body", "history_start", "openResponses", "stat-proxy"):
+        assert token not in html, f"{token}: proxy-era UI still referenced"
+
+
+def test_door_is_presented_as_the_only_request_path():
     _, js = _html_and_js()
-    m = re.search(r"(let|const)\s+openResponses\s*=", js)
-    assert m and m.group(1) == "let", "openResponses is reassigned on history_start"
+    assert "stat-door" in js, "header must show the waitroom door address"
+    assert "cfg.waitroom_url" in js, "door address comes from the monitor's config block"
+    assert "renderQueue(m)" in js, "queue strip must be fed by the door's arbiter (model block)"

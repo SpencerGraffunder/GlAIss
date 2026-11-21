@@ -28,6 +28,7 @@ def test_parse_engine_metrics_uses_last_request():
     assert out["cache_hit_rate"] == 0.773
     assert out["phase"] == "generating"
     assert out["requests"] == 2
+    assert out["lifetime_requests"] == 250
 
 
 def test_parse_engine_metrics_falls_back_to_history_tail():
@@ -44,18 +45,15 @@ def test_parse_engine_metrics_handles_missing_payload():
         assert out["decode_tps"] is None
 
 
-def test_history_prefers_engine_speed_over_proxy_estimate():
+def test_history_records_engine_speed_only():
+    """The console is not in the request path, so history has no proxy fallback."""
     hist = History(maxlen=10)
     hist.add({
         "time": 1.0,
         "system": {"decode_tps": 67.1, "prefill_tps": 36.6, "token_speed_source": "engine/metrics"},
-        "traffic": {"avg_decode_tps": None, "avg_pp_tps": None},
     })
-    hist.add({
-        "time": 2.0,
-        "system": {"decode_tps": None, "prefill_tps": None},
-        "traffic": {"avg_decode_tps": 40.0, "avg_pp_tps": 900.0},
-    })
+    hist.add({"time": 2.0, "system": {"decode_tps": None, "prefill_tps": None}})
     samples = hist.samples
-    assert samples[0]["decode_tps"] == 67.1 and samples[0]["token_speed_source"] == "engine/metrics"
-    assert samples[1]["decode_tps"] == 40.0 and samples[1]["prefill_tps"] == 900.0
+    assert samples[0]["decode_tps"] == 67.1 and samples[0]["prefill_tps"] == 36.6
+    assert samples[0]["token_speed_source"] == "engine/metrics"
+    assert samples[1]["decode_tps"] is None and "traffic" not in samples[1]
