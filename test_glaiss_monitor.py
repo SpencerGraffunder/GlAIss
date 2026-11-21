@@ -120,3 +120,39 @@ def test_event_endpoint_feeds_journal_and_hub(tmp_path, monkeypatch):
         assert r.status_code == 200
     assert hub.messages[-1]["event"]["model"] == "Text A"
     assert any("arbiter_handoff" in x["text"] for x in m.journal.tail())
+
+
+def test_journal_units_are_json_serializable():
+    """Regression: a set here made /api/state and /api/logs 500 for every caller."""
+    from glaiss_app.journal import JournalRing
+
+    ring = JournalRing()
+    ring.add(json.dumps({
+        "__REALTIME_TIMESTAMP": "1700000000000000",
+        "UNIT": "strata31",
+        "PRIORITY": "6",
+        "COMM": "llama-server",
+        "MESSAGE": "hello",
+    }))
+    entry = ring.records[-1]
+    assert isinstance(entry["unit"], list)
+    assert json.dumps(entry)  # must not raise
+    assert "llama-server" in entry["unit"]
+
+
+def test_state_endpoint_serializes_with_journal_data(tmp_path, monkeypatch):
+    """The combined /api/state payload must render once journal records exist."""
+    from fastapi.testclient import TestClient
+
+    p, m = make_monitor(tmp_path, monkeypatch)
+    m.journal.add(json.dumps({
+        "__REALTIME_TIMESTAMP": "1700000000000000",
+        "UNIT": "comfyui",
+        "PRIORITY": "3",
+        "COMM": "python3",
+        "MESSAGE": "boom",
+    }))
+    with TestClient(p.app) as c:
+        r = c.get("/api/state")
+        assert r.status_code == 200, r.text[:400]
+        assert "services" in r.json()

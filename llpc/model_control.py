@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""LLPC model-control CLI with the same safety rails as the GlAIss dashboard."""
+"""LLPC model-control CLI with the same safety rails as the GlAIss dashboard.
+
+Also imported as a MODULE by ``~/llama-swap/waitroom.py`` and
+``~/llama-swap/slot-watchdog.py``, which call ``read_lock``, ``read_manual``,
+``lock_conflict``, ``lock_error_payload`` and ``is_backstop_suppressed`` at
+module level. Those are re-exported from ``glaiss_app.model_state`` below; keep
+them in sync with what the waitroom calls or the routing door 500s on /state.
+"""
 
 from __future__ import annotations
 
@@ -12,11 +19,37 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# Repo layout puts glaiss_app one level up; the installed layout
+# (~/llama-swap/model_control.py) relies on GLAISS_ROOT or the unit's PYTHONPATH.
+for _p in (os.path.join(_HERE, ".."), os.environ.get("GLAISS_ROOT", "/opt/glaiss")):
+    if _p and os.path.isdir(_p) and _p not in sys.path:
+        sys.path.append(_p)
 
-from glaiss_app import collectors as C
+# dependency-free shared state: needed by the waitroom at import time
 from glaiss_app import model_state as state
+
+read_lock = state.read_lock
+read_manual = state.read_manual
+lock_conflict = state.lock_conflict
+lock_error_payload = state.lock_error_payload
+is_backstop_suppressed = state.is_backstop_suppressed
+control_snapshot = state.control_snapshot
+write_lock = state.write_lock
+write_manual = state.write_manual
+clear_lock = state.clear_lock
+clear_manual = state.clear_manual
+resume_auto = state.resume_auto
+read_lastswap = state.read_lastswap
+
+try:  # the CLI needs collectors; the waitroom does not
+    from glaiss_app import collectors as _collectors
+except Exception:  # pragma: no cover - only when the web install is absent
+    _collectors = None
+
+C: Any = _collectors
 
 
 def print_json(obj):

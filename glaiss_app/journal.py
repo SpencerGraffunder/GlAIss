@@ -70,7 +70,8 @@ class JournalRing:
             routed.add("llama-server")
         entry = {
             "ts": _ts(rec),
-            "unit": routed or [unit or "unknown"],
+            # list, not set: records are serialized straight into HTTP JSON
+            "unit": sorted(routed) if routed else [unit or "unknown"],
             "priority": _priority(rec),
             "severity": "error" if _priority(rec) <= 3 else "warn" if _priority(rec) <= 4 else "info",
             "comm": comm,

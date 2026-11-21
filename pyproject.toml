@@ -24,3 +24,6 @@ packages = ["glaiss_app"]
 [tool.pytest.ini_options]
 testpaths = ["."]
 python_files = ["test_*.py"]
+# llpc/test_waitroom.py is a standalone aiohttp script suite for the shipped
+# waitroom (run: `python3 llpc/test_waitroom.py`), not a pytest module.
+addopts = "--ignore=llpc/test_waitroom.py"
