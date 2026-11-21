@@ -73,8 +73,9 @@ class History:
             "hold_remaining_s": model.get("hold_remaining_s"),
             "inflight": model.get("inflight"),
             "waiting": len(model.get("waiting") or []),
-            "decode_tps": traffic.get("avg_decode_tps"),
-            "prefill_tps": traffic.get("avg_pp_tps"),
+            "decode_tps": system.get("decode_tps") if system.get("decode_tps") is not None else traffic.get("avg_decode_tps"),
+            "prefill_tps": system.get("prefill_tps") if system.get("prefill_tps") is not None else traffic.get("avg_pp_tps"),
+            "token_speed_source": system.get("token_speed_source"),
         })
 
     def tail(self, seconds: float = 900) -> List[Dict[str, Any]]:
@@ -332,6 +333,18 @@ class Monitor:
                 "visible_in_picker": not bool(m.get("unlisted")),
             })
 
+        # Token speed comes from the engine itself: real clients talk to the
+        # waitroom directly, so the proxy's own averages are usually empty.
+        loaded_row = C.resolve_registry_model(self.registry_models, current_loaded_model or "") or {}
+        engine = await C.engine_metrics(loaded_row.get("port"), C.read_llama_swap_key())
+
+        traffic_snap = self.proxy.stats.snapshot() if hasattr(self.proxy, "stats") else {}
+        decode_tps = engine.get("decode_tps") or traffic_snap.get("avg_decode_tps")
+        prefill_tps = engine.get("prefill_tps") or traffic_snap.get("avg_pp_tps")
+        tps_source = engine.get("source") if engine.get("ok") and (
+            engine.get("decode_tps") or engine.get("prefill_tps")) else (
+            "proxy" if (decode_tps or prefill_tps) else None)
+
         snap = {
             "time": now,
             "collectors": {
@@ -340,6 +353,8 @@ class Monitor:
                 "registry": {"ok": self.registry_error is None, "error": self.registry_error, "models": len(self.registry_models)},
                 "gpu": {"ok": bool(gpus), "error": gpu_error},
                 "cpu_power": {"ok": rapl_w is not None, "error": rapl_error},
+                "engine": {"ok": bool(engine.get("ok")), "error": engine.get("error"),
+                           "port": loaded_row.get("port")},
                 "journal": self.journal.status,
             },
             "model": {
@@ -375,10 +390,17 @@ class Monitor:
                 "vram_used_mib": vram_used,
                 "vram_total_mib": vram_total,
                 "gpu_util_percent": gpu_util,
+                "decode_tps": decode_tps,
+                "prefill_tps": prefill_tps,
+                "token_speed_source": tps_source,
+                "engine_phase": engine.get("phase"),
+                "engine_prompt_tokens": engine.get("prompt_tokens"),
+                "engine_cache_hit_rate": engine.get("cache_hit_rate"),
                 "gpus": gpus,
             },
             "services": services,
-            "traffic": self.proxy.stats.snapshot() if hasattr(self.proxy, "stats") else {},
+            "engine": engine,
+            "traffic": traffic_snap,
             "control": {"jobs": [j.as_dict() for j in sorted(self.control.jobs.values(), key=lambda x: x.created_at, reverse=True)[:30]]},
             "config": {
                 "waitroom_url": C.WAITROOM_URL,

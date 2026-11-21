@@ -128,24 +128,39 @@
 </section>
 
 <script>
-const $ = x => document.getElementById(x);
+const $ = x => document.getElementById(String(x).replace(/^#/, ''));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (x,suf='') => x==null ? '—' : (Number.isFinite(+x) ? Math.round(+x*10)/10 : x)+suf;
 const bytes = x => { if(x==null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let n=+x,i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return Math.round(n*10)/10+' '+u[i]; };
 const secs = x => x==null ? '—' : x<1 ? Math.round(x*1000)+'ms' : (+x).toFixed(1)+'s';
 const state = {data:null, history:{samples:[]}, jobs:[], activeTab:'models', logTimer:null, jobTimer:null};
 
-function setStatus(sel, ok, text) { const d=$(sel); d.classList.toggle('dot-ok', !!ok); d.title=text||''; }
+function setStatus(sel, ok, text) { const d=$(sel); if(!d) return; d.classList.toggle('dot-ok', !!ok); d.title=text||''; }
 function updateStats(s) {
-  $('stat-pp').textContent = fmt(s.avg_pp_tps,' t/s'); $('stat-decode').textContent = fmt(s.avg_decode_tps,' t/s');
-  $('stat-total').textContent = s.total_requests ?? 0; renderQueue(s.active_requests || []);
+  // Proxy-measured averages only exist for traffic routed *through* GlAIss; never
+  // let an empty proxy stat erase the engine-reported token speed.
+  if (s.avg_pp_tps != null) $('stat-pp').textContent = fmt(s.avg_pp_tps,' t/s');
+  if (s.avg_decode_tps != null) $('stat-decode').textContent = fmt(s.avg_decode_tps,' t/s');
+  $('stat-total').textContent = s.total_requests ?? 0; renderQueue(s.active_requests || [], state.data?.model);
 }
-function renderQueue(rs) {
+function renderQueue(rs, m) {
   const old = [...$('queue-boxes').children].filter(x=>x.classList.contains('finished')); const boxes=[];
   rs.forEach(r => { const b=document.createElement('div'); b.className='qbox '+(r.phase==='queued'?'queued':'running'); b.dataset.req=r.id;
     const pp = r.pp_seconds?r.prompt_tokens_est/r.pp_seconds:(r.est_pp_seconds?r.prompt_tokens_est/r.est_pp_seconds:null);
     b.innerHTML = `<div class="a"><b>${esc(r.model)}</b><span class="small">${esc(r.id)} · ${esc(r.phase)}</span><button class="cancel" title="cancel">✕</button></div><div class="m"><span>in <b>${r.prompt_tokens_est??0}</b></span><span>gen <b>${r.tokens_generated??0}</b></span><span>pp <b>${fmt(pp)}</b></span><span>dec <b>${fmt(r.decode_tps)}</b></span></div>`;
     b.querySelector('.cancel').onclick=()=>cancel(r.id); boxes.push(b); });
+  // The door's own arbiter: clients talk to :8080 directly, so the proxy list
+  // alone would leave this strip empty even with the queue busy.
+  if (m) {
+    if (m.active) { const b=document.createElement('div'); b.className='qbox running';
+      b.innerHTML=`<div class="a"><b>${esc(m.active)}</b><span class="small">waitroom · serving</span></div><div class="m"><span>inflight <b>${m.inflight??0}</b></span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`; boxes.push(b); }
+    (m.waiting||[]).forEach(w => { const b=document.createElement('div'); b.className='qbox queued';
+      b.innerHTML=`<div class="a"><b>${esc(w.model)}</b><span class="small">waitroom · waiting</span></div><div class="m"><span>waited <b>${fmt(w.waited_s,'s')}</b></span></div>`; boxes.push(b); });
+    if (m.hold_remaining_s > 0) { const b=document.createElement('div'); b.className='qbox queued';
+      b.innerHTML=`<div class="a"><b>hysteresis hold</b><span class="small">waitroom · parking new model</span></div><div class="m"><span>left <b>${fmt(m.hold_remaining_s,'s')}</b></span></div>`; boxes.push(b); }
+    if (!m.active && !(m.waiting||[]).length && !(m.hold_remaining_s > 0)) { const b=document.createElement('div'); b.className='qbox queued';
+      b.innerHTML=`<div class="a"><b>${esc(m.current_loaded_model||m.loaded_model||'door idle')}</b><span class="small">waitroom · nothing queued</span></div>`; boxes.push(b); }
+  }
   $('queue-boxes').innerHTML=''; boxes.forEach(x=>$('queue-boxes').appendChild(x)); old.forEach(x=>$('queue-boxes').appendChild(x));
 }
 function cancel(id){ const x=$('queue-boxes').querySelector(`[data-req="${CSS.escape(id)}"]`); if(x)x.remove(); fetch('/api/cancel/'+id,{method:'POST'}).catch(()=>{}); }
@@ -159,8 +174,11 @@ function renderMonitor(d) {
   $('stat-monitor').className='value '+(d.collectors?.waitroom?.ok?'v-accent':'v-err');
   $('stat-loaded').textContent=m.current_loaded_model||m.loaded_model||'none'; $('stat-active').textContent=m.active||'idle';
   $('stat-hold').textContent=fmt(m.hold_remaining_s,'s'); $('stat-wait').textContent=(m.waiting||[]).length;
-  $('stat-pp').textContent=fmt(t.avg_pp_tps,' t/s'); $('stat-decode').textContent=fmt(t.avg_decode_tps,' t/s');
+  $('stat-pp').textContent=fmt(s.prefill_tps ?? t.avg_pp_tps,' t/s'); $('stat-decode').textContent=fmt(s.decode_tps ?? t.avg_decode_tps,' t/s');
+  const tpsNote=`source: ${s.token_speed_source||'—'} · engine: ${s.engine_phase||'idle'} · KV reuse: ${s.engine_cache_hit_rate!=null?Math.round(s.engine_cache_hit_rate*100)+'%':'—'}`;
+  $('stat-pp').title=tpsNote; $('stat-decode').title=tpsNote;
   $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W'); $('stat-ram').textContent=bytes(s.ram_used_bytes); $('stat-vram').textContent=bytes((s.vram_used_mib||0)*1048576);
+  updateStats(t); renderQueue(t.active_requests || [], m);
   renderCurrent(d); renderModels(d); renderServices(d.services||[]); renderJobs((d.control||{}).jobs||[]); renderCharts();
 }
 function renderCurrent(d) {
@@ -214,7 +232,7 @@ setInterval(poll,2000); setInterval(followLogs,3000);
 let ws; function connectWS(){ const p=location.protocol==='https:'?'wss':'ws'; ws=new WebSocket(`${p}://${location.host}/ws`); ws.onopen=()=>setStatus('#ws-dot',true,'proxy websocket connected'); ws.onclose=()=>{setStatus('#ws-dot',false,'reconnecting'); setTimeout(connectWS,1500)}; ws.onmessage=e=>{const m=JSON.parse(e.data); if(m.type==='stats')updateStats(m); else if(m.type==='config')applyConfig(m.config); else if(m.type==='monitor'){if(state.data)renderMonitor(Object.assign({},state.data,m));} else if(m.type==='control_job'){renderJobs([m.job,...state.jobs.filter(x=>x.id!==m.job.id)]); poll();}}; }
 fetch('/api/config').then(r=>r.json()).then(applyConfig).catch(()=>{}); connectWS(); poll(); pollLogs();
 /* request log renderer (preserved from original GlAIss) */
-const promptBody=$('prompt-body'), responseBody=$('response-body'), openResponses={}; let pCount=0,rCount=0;
+const promptBody=$('prompt-body'), responseBody=$('response-body'); let openResponses={}, pCount=0,rCount=0;
 function trim(x,m){while(x.children.length>m)x.removeChild(x.firstChild)}
 function roleClass(x){return x==='system'?'role-system':x==='user'?'role-user':x==='assistant'?'role-assistant':''}
 function promptHtml(t){return t.split('\n').map(l=>{const m=l.match(/^\[(\w+)\]\s?([\s\S]*)$/); return m?`<span class="${roleClass(m[1])}">[${esc(m[1])}]</span> ${esc(m[2])}`:esc(l)}).join('<br>')}

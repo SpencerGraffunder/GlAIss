@@ -115,6 +115,7 @@ access to `http://<llpc-address>:8899/` still works for local debugging.
 |---|---|---|
 | `GLAISS_STATE_DIR` | repo directory | writable config directory |
 | `GLAISS_LISTEN_PORT` | config/8899 | listen port override |
+| `GLAISS_ENGINE_METRICS_TIMEOUT` | `4` | seconds for the engine `/metrics` fetch (token speed) |
 | `GLAISS_PROVIDER_HOST` | `127.0.0.1` | proxy destination |
 | `GLAISS_PROVIDER_PORT` | config/8080 | proxy destination port |
 | `WAITROOM_URL` | `http://127.0.0.1:8080` | monitor source |

@@ -129,6 +129,72 @@ def http_json_sync(url: str, *, headers: Optional[Dict[str, str]] = None, timeou
         return {"ok": False, "error": str(exc), "url": url}
 
 
+ENGINE_METRICS_TIMEOUT = float(os.environ.get("GLAISS_ENGINE_METRICS_TIMEOUT", "4"))
+
+
+def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
+    """Normalize an engine ``/metrics`` payload into console token-speed numbers.
+
+    Strata reports per-request ``decode_tok_s`` plus ``prompt_read``/``prompt_ms``
+    for the prefill phase. ``prompt_total`` includes KV-cache-reused tokens, so the
+    recompute rate uses ``prompt_read`` — otherwise a warm prompt would read as an
+    impossibly fast prefill.
+    """
+    out: Dict[str, Any] = {
+        "ok": False, "error": "no metrics payload", "decode_tps": None, "prefill_tps": None,
+        "phase": None, "prompt_tokens": None, "prompt_read": None, "generated": None,
+        "cache_hit_rate": None, "requests": 0, "source": None,
+    }
+    if not isinstance(payload, dict) or not payload:
+        out["error"] = "no metrics payload"
+        return out
+    live_raw = payload.get("live")
+    live: Dict[str, Any] = live_raw if isinstance(live_raw, dict) else {}
+    reqs = [r for r in (payload.get("requests") or []) if isinstance(r, dict)]
+    last: Dict[str, Any] = reqs[-1] if reqs else {}
+    if not live and not reqs and not payload.get("history"):
+        out["error"] = "engine returned a metrics payload with no data"
+        return out
+
+    decode = last.get("decode_tok_s")
+    if not decode:
+        tail = [v for v in ((payload.get("history") or {}).get("tok_s") or [])
+                if isinstance(v, (int, float)) and v > 0]
+        decode = tail[-1] if tail else (live.get("tok_s") or None)
+    prefill = None
+    if last.get("prompt_ms") and last.get("prompt_read"):
+        prefill = float(last["prompt_read"]) / (float(last["prompt_ms"]) / 1000.0)
+    if not prefill and live.get("prefill_tok_s"):
+        prefill = live.get("prefill_tok_s")
+
+    out.update({
+        "ok": True, "error": None,
+        "decode_tps": round(float(decode), 1) if decode else None,
+        "prefill_tps": round(float(prefill), 1) if prefill else None,
+        "phase": live.get("phase") or live.get("state"),
+        "prompt_tokens": live.get("prompt_tokens"),
+        "prompt_read": last.get("prompt_read"),
+        "generated": live.get("generated"),
+        "cache_hit_rate": last.get("hit_rate"),
+        "requests": len(reqs),
+        "source": "engine/metrics",
+    })
+    return out
+
+
+async def engine_metrics(port: Optional[int], api_key: Optional[str] = None) -> Dict[str, Any]:
+    """Token speed straight from the loaded engine (clients rarely route via the proxy)."""
+    if not port:
+        return {"ok": False, "error": "no engine port for the loaded model", "decode_tps": None, "prefill_tps": None}
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+    resp = await http_json(f"http://127.0.0.1:{port}/metrics", headers=headers, timeout=ENGINE_METRICS_TIMEOUT)
+    parsed = parse_engine_metrics(resp.get("data") if resp.get("ok") else None)
+    if not resp.get("ok"):
+        err = resp.get("error")
+        parsed["error"] = err if isinstance(err, str) else json.dumps(err)[:200]
+    return parsed
+
+
 def read_llama_swap_key() -> Optional[str]:
     """Return first llama-swap api key from the existing llpc config."""
     try:
