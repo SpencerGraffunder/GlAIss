@@ -59,3 +59,15 @@ def test_door_is_presented_as_the_only_request_path():
     assert "stat-door" in js, "header must show the waitroom door address"
     assert "cfg.waitroom_url" in js, "door address comes from the monitor's config block"
     assert "renderQueue(m)" in js, "queue strip must be fed by the door's arbiter (model block)"
+
+
+def test_page_only_calls_routes_the_console_serves():
+    """The inverse of the route-surface test: no call site pointing at dead code."""
+    from test_single_proxy import console_routes
+
+    _, js = _html_and_js()
+    called = set(re.findall(r"(?:fetch|post)\('(/[^']*)'", js))
+    called |= {"/ws"} if "WebSocket(`${p}://${location.host}/ws`)" in js else set()
+    called = {p.split("?")[0] for p in called}
+    unknown = sorted(p for p in called if p not in console_routes())
+    assert not unknown, f"page calls routes that do not exist: {unknown}"

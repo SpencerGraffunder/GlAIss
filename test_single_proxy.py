@@ -20,6 +20,51 @@ def _app_sources():
     return {p.name: p.read_text() for p in sorted(APP.glob("*.py"))}
 
 
+def console_routes():
+    """Every path the console declares, from its route decorators."""
+    routes = set()
+    for name in ("monitor.py", "console.py"):
+        for _verb, path in re.findall(
+            r'@(?:router|app)\.(get|post|websocket)\("([^"]+)"', (APP / name).read_text()
+        ):
+            routes.add(path)
+    return routes
+
+
+# The console's whole HTTP surface. Adding an entry means it is a real feature the
+# page (or the door) uses; deleting dead code should shrink this set, never let it
+# drift from README.md.
+EXPECTED_ROUTES = {
+    "/", "/ws",
+    "/api/health", "/api/state", "/api/history", "/api/logs",
+    "/internal/waitroom/events",
+    "/api/control/load", "/api/control/unload", "/api/control/lock",
+    "/api/control/unlock", "/api/control/resume_auto",
+}
+
+
+def test_console_route_surface_is_exactly_the_documented_set():
+    routes = console_routes()
+    assert routes == EXPECTED_ROUTES, (
+        f"unexpected: {sorted(routes - EXPECTED_ROUTES)}; "
+        f"missing: {sorted(EXPECTED_ROUTES - routes)}"
+    )
+
+
+def test_readme_documents_every_route():
+    """README's API bullets and the code's route table must be the same set."""
+    readme = (REPO / "README.md").read_text()
+    documented = set()
+    for line in readme.splitlines():
+        m = re.match(r"^\s*-\s*`(GET|POST|WEBSOCKET|WS|websocket)(\s+(/[^`\s]*))?`", line)
+        if m:
+            documented.add((m.group(3) or "/").split("?")[0])
+    assert documented == console_routes(), (
+        f"documented but not implemented: {sorted(documented - console_routes())}; "
+        f"implemented but undocumented: {sorted(console_routes() - documented)}"
+    )
+
+
 def test_waitroom_is_the_only_server_side_request_handler():
     """Only llpc/waitroom.py may accept client inference traffic."""
     assert (REPO / "llpc" / "waitroom.py").exists()

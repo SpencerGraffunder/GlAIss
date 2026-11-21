@@ -39,9 +39,6 @@ DEFAULT_INTENT_FILE = Path(
 DEFAULT_LASTMODEL_FILE = Path(
     os.environ.get("WAITROOM_LASTMODEL_FILE", str(DEFAULT_SWAP_DIR / "last-model"))
 )
-DEFAULT_DEFAULTMODEL_FILE = Path(
-    os.environ.get("WAITROOM_DEFAULT_FILE", str(DEFAULT_SWAP_DIR / "default-model"))
-)
 DEFAULT_SWAP_DESIRED_FILE = Path(
     os.environ.get("SWAP_DESIRED_FILE", str(DEFAULT_STATE_DIR / "swap-desired"))
 )
@@ -255,13 +252,3 @@ def read_text(path: Path) -> Optional[str]:
         return value or None
     except Exception:
         return None
-
-
-def waitroom_file_snapshot() -> Dict[str, Any]:
-    return {
-        "last_swap_unix": read_lastswap() or None,
-        "last_model": read_text(DEFAULT_LASTMODEL_FILE),
-        "default_model": read_text(DEFAULT_DEFAULTMODEL_FILE),
-        "desired_unit": read_text(DEFAULT_SWAP_DESIRED_FILE),
-        "intent": _read_json(DEFAULT_INTENT_FILE),
-    }

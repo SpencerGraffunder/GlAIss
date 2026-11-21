@@ -5,19 +5,18 @@ __pycache__/
 .venv/
 venv/
 
-# Local runtime config (created on first run; holds your provider host/port)
+# Local runtime config (created on first run; the only key is listen_port)
 glaiss_config.json
 
-# OS / editor
-.DS_Store
-.idea/
-.vscode/
-
-# Local artifacts that do not belong in the GlAIss product repo
-/Thaumcraft-6-Source-Code/
+# Tooling / editor
 .pytest_cache/
 .coverage
 htmlcov/
 dist/
 build/
-*.egg-info/
+.DS_Store
+.idea/
+.vscode/
+
+# Unrelated checkouts that happen to live in this directory (not part of GlAIss).
+Thaumcraft-6-Source-Code/

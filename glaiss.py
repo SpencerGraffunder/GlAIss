@@ -17,12 +17,6 @@ monitor.install(console)
 
 app = console.app
 CONFIG = console.CONFIG
-CONFIG_PATH = console.CONFIG_PATH
-BASE_DIR = console.BASE_DIR
-STATE_DIR = console.STATE_DIR
-STATIC_DIR = console.STATIC_DIR
-Hub = console.Hub
-hub = console.hub
 
 
 def main() -> None:

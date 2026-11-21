@@ -16,9 +16,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from starlette.websockets import WebSocketState
 
 from . import collectors as C
 from . import journal as J
@@ -492,21 +491,6 @@ def install(app_module) -> None:
     async def api_history(seconds: float = 900):
         return {"samples": monitor.history.tail(seconds)}
 
-    @router.get("/api/model")
-    async def api_model():
-        snap = await monitor.refresh_now(force=True)
-        return {"model": snap.get("model"), "models": snap.get("models")}
-
-    @router.get("/api/services")
-    async def api_services():
-        snap = await monitor.refresh_now(force=True)
-        return {"services": snap.get("services"), "collectors": snap.get("collectors")}
-
-    @router.get("/api/system")
-    async def api_system():
-        snap = await monitor.refresh_now(force=True)
-        return {"system": snap.get("system"), "engine": snap.get("engine")}
-
     @router.get("/api/logs")
     async def api_logs(limit: int = 300, unit: Optional[str] = None, level: Optional[str] = None):
         return {
@@ -514,23 +498,6 @@ def install(app_module) -> None:
             "counts": monitor.journal.counts(),
             "status": monitor.journal.status,
         }
-
-    @router.websocket("/ws/logs")
-    async def logs_ws(ws: WebSocket):
-        await ws.accept()
-        try:
-            while True:
-                await ws.send_text(json.dumps({
-                    "type": "logs",
-                    "ts": time.time(),
-                    "logs": monitor.journal.tail(limit=200),
-                    "counts": monitor.journal.counts(),
-                }))
-                await asyncio.sleep(1)
-        except WebSocketDisconnect:
-            pass
-        except Exception:
-            pass
 
     @router.post("/internal/waitroom/events")
     async def waitroom_event(request: Request):
@@ -549,10 +516,6 @@ def install(app_module) -> None:
         if hub:
             await hub.emit({"type": "waitroom_event", "event": payload, "ts": time.time()})
         return {"ok": True}
-
-    @router.get("/api/control/jobs")
-    async def control_jobs():
-        return {"jobs": [j.as_dict() for j in sorted(control.jobs.values(), key=lambda x: x.created_at, reverse=True)]}
 
     @router.post("/api/control/load")
     async def control_load(request: Request):

@@ -14,7 +14,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
+# `quote` is re-exported on purpose: monitor.py, slot-watchdog.py and waitroom.py
+# call it as C.quote(), so it looks unused inside this module.
 from urllib.parse import quote
 import urllib.request
 
@@ -61,10 +63,6 @@ MODEL_PORTS = {
     "strata-dsv41": 8087,
     "comfyui": 8188,
 }
-
-
-def now_ms() -> float:
-    return time.time()
 
 
 async def run_cmd(cmd: List[str], timeout: float = 5.0, text: bool = True) -> Tuple[int, str, str]:
@@ -627,15 +625,6 @@ def llama_swap_running_sync() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     return None, result.get("error") or str(result)
 
 
-async def llama_swap_models() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    key = read_llama_swap_key()
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
-    result = await http_json(f"{LLAMA_SWAP_URL}/v1/models", headers=headers, timeout=3)
-    if result.get("ok"):
-        return result.get("data"), None
-    return None, result.get("error") or str(result)
-
-
 async def service_row(
     display: str,
     canonical: Optional[str],
@@ -705,9 +694,3 @@ async def service_row(
         "updated_at": now,
     }
 
-
-def uptime_from_timestamp(ts: Optional[str]) -> Optional[float]:
-    if not ts:
-        return None
-    # systemd "Mon YYYY-MM-DD HH:MM:SS EST" is not portable; do not fake it.
-    return None

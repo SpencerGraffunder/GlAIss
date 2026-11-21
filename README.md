@@ -137,14 +137,13 @@ access to `http://<llpc-address>:8899/` still works for local debugging.
 
 ## API
 
+The console's entire HTTP surface — anything else is a 404:
+
 - `GET /` — console page
 - `GET /ws` — websocket: `monitor`, `control_job`, `waitroom_event` pushes
 - `GET /api/health`
-- `GET /api/state`
+- `GET /api/state` — the whole snapshot (model, models, system, services, engine, control, config)
 - `GET /api/history?seconds=900`
-- `GET /api/model`
-- `GET /api/services`
-- `GET /api/system`
 - `GET /api/logs?limit=300&unit=strata31&level=error`
 - `POST /internal/waitroom/events` (waitroom fire-and-forget feed)
 - `POST /api/control/load`
@@ -153,8 +152,11 @@ access to `http://<llpc-address>:8899/` still works for local debugging.
 - `POST /api/control/unlock`
 - `POST /api/control/resume_auto`
 
-Anything else — including `/v1/chat/completions` — is a 404. If you ever need
-inference traffic, that is the door's job on `:8080`.
+`/api/state` is the single read endpoint the page uses; the old slice aliases
+(`/api/model`, `/api/services`, `/api/system`, `/api/control/jobs`) and the
+`/ws/logs` socket were removed on 2026-11-21 as dead — every one of them was a
+subset of `/api/state`, and nothing called them. If you ever need inference
+traffic, that is the door's job on `:8080`.
 
 ## Tests
 
