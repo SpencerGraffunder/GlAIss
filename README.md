@@ -48,6 +48,17 @@ trusted VPN network (in practice: Cloudflare Access on
   and a live journal console for the same units.
 - CPU package power, total GPU power, combined system power, RAM, VRAM, CPU and
   GPU utilization, decode t/s, and prefill t/s history.
+- **Per-GPU cards** from the engine's `hardware.gpus` block (utilization, memory,
+  temperature, power) with `nvidia-smi` as fallback when an engine reports no
+  hardware block; PCIe rx/tx are aggregate totals from the engine.
+- **Comfy workload** from `GET /system_stats` and `GET /queue` on `:8188`, read
+  only while Comfy owns the slot — running/pending counts, prompt id, device VRAM
+  and free RAM; otherwise the panel says `comfy not loaded`.
+- **STT activity** from the `whisper-server`/`whisper-shim` service rows (state,
+  CPU, RSS, VRAM) because Whisper exposes no request/throughput endpoint.
+- **Door traffic counters** (admissions, handoffs, cancellations, timeouts,
+  median queue wait, per-model use) fed by the door's event POST; the console
+  never sees client traffic itself.
 - Registry-backed model catalog and manual model controls.
 
 ## Architecture
@@ -56,7 +67,8 @@ trusted VPN network (in practice: Cloudflare Access on
 clients ──────────────────────────────> llpc waitroom :8080 -> llama-swap :8090 -> engine
                                               │  (the only proxy in the repo)
                                               │ events (/internal/waitroom/events)
-llpc state files, systemd, nvidia-smi, RAPL, engine /metrics
+llpc state files, systemd, nvidia-smi, RAPL, Comfy `/system_stats` + `/queue`,
+engine `/metrics`
                                               │
                         GlAIss console :8899 (observe + manual control only)
 ```
@@ -158,7 +170,7 @@ The console's entire HTTP surface — anything else is a 404:
 - `GET /` — console page
 - `GET /ws` — websocket: `monitor`, `control_job`, `waitroom_event` pushes
 - `GET /api/health`
-- `GET /api/state` — the whole snapshot (model, models, system, services, engine, control, config)
+- `GET /api/state` — the whole snapshot (model, models, system, services, engine, control, config, comfy, stt, door_traffic)
 - `GET /api/history?seconds=900`
 - `GET /api/logs?limit=300&unit=strata31&level=error`
 - `POST /internal/waitroom/events` (waitroom fire-and-forget feed)
@@ -186,7 +198,8 @@ Tests cover the single-proxy rule and the exact HTTP surface
 (`test_single_proxy.py`), the console page's DOM/JS contract including "the page
 calls no route that doesn't exist" (`test_ui_contract.py`), the ban on
 unreferenced top-level names (`test_no_dead_code.py`), engine token-speed
-parsing (`test_engine_metrics.py`), monitor routes and waitroom event fan-out,
-hysteresis/lock state, and manual-control guards. The waitroom's own 102-check
-suite runs standalone: `python3 llpc/test_waitroom.py`. No test starts, loads,
-or stops a production model.
+parsing (`test_engine_metrics.py`), per-GPU card/nvidia-smi fallback, Comfy queue
+parsing and door-traffic aggregation (`test_glaiss_stats.py`), monitor routes and
+waitroom event fan-out, hysteresis/lock state, and manual-control guards. The
+waitroom's own 115-check suite runs standalone: `python3 llpc/test_waitroom.py`.
+No test starts, loads, or stops a production model.

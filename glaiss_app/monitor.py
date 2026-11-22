@@ -12,7 +12,8 @@ import json
 import os
 import time
 import uuid
-from collections import deque
+import statistics
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -85,6 +86,56 @@ class History:
     def tail(self, seconds: float = 900) -> List[Dict[str, Any]]:
         cutoff = time.time() - seconds
         return [s for s in self.samples if s.get("ts", 0) >= cutoff]
+
+
+class Traffic:
+    """Door event counters. The console never carries traffic, but the waitroom
+    posts its queue events to /internal/waitroom/events, so admissions, cancels,
+    timeouts and per-model use are observable here."""
+
+    def __init__(self, maxlen: int = 2000):
+        self.events: deque[Dict[str, Any]] = deque(maxlen=maxlen)
+
+    def add(self, payload: Any) -> None:
+        if not isinstance(payload, dict):
+            return
+        model = payload.get("model") or payload.get("requested")
+        self.events.append({
+            "ts": float(payload.get("ts") or time.time()),
+            "type": str(payload.get("type") or "unknown"),
+            "model": model,
+            "req_id": payload.get("req_id"),
+        })
+
+    def summary(self, window: float = 3600.0) -> Dict[str, Any]:
+        now = time.time()
+        cutoff = now - window
+        evs = [e for e in self.events if e["ts"] >= cutoff]
+        counts = Counter(e["type"] for e in evs)
+        models = Counter(e["model"] for e in evs
+                         if e["type"] == "queue_admit" and e["model"])
+        arrivals = {e["req_id"]: e["ts"] for e in evs
+                    if e["type"] == "queue_arrive" and e["req_id"] is not None}
+        waits: List[float] = []
+        for e in evs:
+            if e["type"] == "queue_admit" and e["req_id"] in arrivals:
+                w = e["ts"] - arrivals[e["req_id"]]
+                if w >= 0:
+                    waits.append(w)
+        return {
+            "window_s": int(window),
+            "events": len(evs),
+            "admissions": counts.get("queue_admit", 0),
+            "handoffs": counts.get("arbiter_handoff", 0),
+            "cancellations": counts.get("request_cancel", 0),
+            "timeouts": counts.get("queue_timeout", 0),
+            "parked": counts.get("slot_claim_wait", 0),
+            "holds": counts.get("hysteresis_hold", 0),
+            "lock_rejections": counts.get("lock_rejection", 0),
+            "median_queue_wait_s": round(statistics.median(waits), 2) if waits else None,
+            "models": dict(models),
+            "last_event": round(now - max((e["ts"] for e in evs), default=now), 1),
+        }
 
 
 class ControlManager:
@@ -267,6 +318,7 @@ class Monitor:
         self.cache = C.CollectorCache()
         self.journal = J.JournalRing()
         self.history = History(maxlen=int(os.environ.get("GLAISS_HISTORY_SAMPLES", "1800")))
+        self.traffic = Traffic()
         self.control = ControlManager(self)
         self.last_snapshot: Optional[Dict[str, Any]] = None
         self.registry_models: List[Dict[str, Any]] = []
@@ -303,6 +355,32 @@ class Monitor:
                 "last": self.journal.last_line(log_unit),
             }
             services.append(await C.service_row(display, canonical, label, self.cache, gpu_apps, logs))
+
+        comfy_active = any(r.get("unit") == "comfyui" and r.get("state") == "active" for r in services) \
+            or bool(waitroom.get("comfy_claimed")) or waitroom.get("desired_unit") == "comfyui"
+        comfy = await C.comfy_workload() if comfy_active else {
+            "ok": False, "error": "comfy not loaded", "running": 0, "pending": 0,
+            "running_prompt_id": None, "devices": [], "ram_free_mib": None,
+        }
+
+        def _stt(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            if not row:
+                return {"state": "unknown", "cpu_percent": None, "rss_mib": None,
+                        "vram_mib": None, "main_pid": None}
+            return {
+                "state": row.get("state"),
+                "cpu_percent": row.get("cpu_percent"),
+                "rss_mib": row.get("rss_mib"),
+                "vram_mib": row.get("vram_mib"),
+                "main_pid": row.get("main_pid"),
+            }
+
+        stt = {
+            "server": _stt(next((r for r in services if r.get("display") == "whisper-server"), None)),
+            "shim": _stt(next((r for r in services if r.get("display") == "whisper-shim"), None)),
+            "model": "ggml-base.en.bin · GPU 1",
+            "note": "whisper.cpp exposes no request counter; CPU and VRAM are the activity signals.",
+        }
 
         gpu_power_values = [float(g["power_draw_w"]) for g in gpus if g.get("power_draw_w") is not None]
         vram_used_values = [float(g["memory_used_mib"]) for g in gpus if g.get("memory_used_mib") is not None]
@@ -352,6 +430,9 @@ class Monitor:
         prefill_tps = engine.get("prefill_tps")
         tps_source = engine.get("source") if engine.get("ok") and (
             decode_tps or prefill_tps) else None
+        gpu_cards = engine.get("gpu_cards") or C.nvidia_gpu_cards(gpus)
+        pcie_rx_mb = engine.get("pcie_rx_mb")
+        pcie_tx_mb = engine.get("pcie_tx_mb")
 
         snap = {
             "time": now,
@@ -406,10 +487,16 @@ class Monitor:
                 "engine_prompt_tokens": engine.get("prompt_tokens"),
                 "engine_cache_hit_rate": engine.get("cache_hit_rate"),
                 "engine_requests": engine.get("lifetime_requests"),
+                "gpu_cards": gpu_cards,
+                "pcie_rx_mb": pcie_rx_mb,
+                "pcie_tx_mb": pcie_tx_mb,
                 "gpus": gpus,
             },
             "services": services,
             "engine": engine,
+            "comfy": comfy,
+            "stt": stt,
+            "door_traffic": self.traffic.summary(),
             "control": {"jobs": [j.as_dict() for j in sorted(self.control.jobs.values(), key=lambda x: x.created_at, reverse=True)[:30]]},
             "config": {
                 "waitroom_url": C.WAITROOM_URL,
@@ -446,6 +533,9 @@ class Monitor:
                         "system": snap.get("system"),
                         "services": snap.get("services"),
                         "collectors": snap.get("collectors"),
+                        "comfy": snap.get("comfy"),
+                        "stt": snap.get("stt"),
+                        "door_traffic": snap.get("door_traffic"),
                     }
                     await hub.broadcast(lightweight)
             except Exception as exc:
@@ -508,6 +598,7 @@ def install(app_module) -> None:
             payload = await request.json()
         except Exception:
             payload = {}
+        monitor.traffic.add(payload)
         monitor.journal.add(json.dumps({
             "__REALTIME_TIMESTAMP": str(int(time.time() * 1_000_000)),
             "UNIT": "model-waitroom",

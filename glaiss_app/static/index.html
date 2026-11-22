@@ -60,8 +60,17 @@
   #log-box{height:calc(100% - 36px);overflow:auto;background:#080a0c;border:1px solid var(--border);border-radius:5px;padding:7px;line-height:1.35}
   .log{padding:2px 0;border-bottom:1px solid #15191e}.log .time{color:#5b6672;margin-right:6px}.log .unit{color:var(--accent2);margin-right:6px}.log.error{color:#ff9d9d}.log.warn{color:#f1cc7d}
   .charts{display:grid;grid-template-columns:1fr 1fr;gap:10px}.chart{height:190px;background:#090b0e;border:1px solid var(--border);border-radius:6px;padding:8px} .chart canvas{width:100%;height:145px;display:block}.chart-title{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}.chart-value{float:right;color:var(--accent)}
+  .gpu-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .gcard{background:#090b0e;border:1px solid var(--border);border-radius:6px;padding:8px}
+  .gname{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  .gvals{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--dim)}
+  .gvals b{color:var(--text);font-weight:600}
+  .pcie{font-size:11px;color:var(--dim);margin:0 0 8px}
+  .metricline{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--dim)}
+  .metricline b{color:var(--text);font-weight:600}
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
   ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#2b323a;border-radius:4px}
-  @media(max-width:1080px){.grid{grid-template-columns:1fr}.charts{grid-template-columns:1fr}}
+  @media(max-width:1080px){.grid{grid-template-columns:1fr}.charts{grid-template-columns:1fr}.twocol,.gpu-cards{grid-template-columns:1fr}}
   /* Mobile: the whole page scrolls. Nothing pins the stats or the queue in
      place, and neither of them grows vertically. */
   @media(max-width:700px){
@@ -145,11 +154,17 @@
       <section class="panel"><div class="toolbar"><select id="log-unit"><option value="">all services</option></select><select id="log-level"><option value="">all levels</option><option>error</option><option>warn</option><option>info</option></select><label><input type="checkbox" id="log-follow" checked> follow</label><span class="small" id="log-status"></span></div><div id="log-box"></div></section>
     </div>
     <div class="tabpane" id="pane-metrics">
+      <div id="gpu-cards"></div>
       <div class="charts">
         <div class="chart"><div class="chart-title">Power <span id="power-now" class="chart-value">—</span></div><canvas id="power-chart"></canvas></div>
         <div class="chart"><div class="chart-title">Token speed <span id="tps-now" class="chart-value">—</span></div><canvas id="tps-chart"></canvas></div>
         <div class="chart"><div class="chart-title">System memory <span id="ram-now" class="chart-value">—</span></div><canvas id="ram-chart"></canvas></div>
         <div class="chart"><div class="chart-title">GPU memory <span id="vram-now" class="chart-value">—</span></div><canvas id="vram-chart"></canvas></div>
+      </div>
+      <section class="panel" style="margin-top:10px"><h3>Door traffic · last hour</h3><div id="traffic" class="metricline"></div></section>
+      <div class="twocol">
+        <section class="panel"><h3>Comfy workload</h3><div id="comfy"></div></section>
+        <section class="panel"><h3>Speech (STT)</h3><div id="stt"></div></section>
       </div>
     </div>
   </div>
@@ -242,6 +257,7 @@ function renderMonitor(d) {
   $('stat-reqs').textContent = s.engine_requests ?? '—';
   $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W'); $('stat-ram').textContent=bytes(s.ram_used_bytes); $('stat-vram').textContent=bytes((s.vram_used_mib||0)*1048576);
   renderQueue(m);
+  renderGpuCards(d); renderTraffic(d); renderComfy(d); renderStt(d);
   renderCurrent(d); renderModels(d); renderServices(d.services||[]); renderJobs((d.control||{}).jobs||[]); updateOffline(); renderCharts();
 }
 
@@ -346,6 +362,56 @@ $('refresh-state').onclick=poll;
 
 async function pollLogs(){ const q=new URLSearchParams({limit:500}); if($('log-unit').value)q.set('unit',$('log-unit').value); if($('log-level').value)q.set('level',$('log-level').value); try{const d=await(await fetch('/api/logs?'+q)).json(); $('log-status').textContent=d.status?.running?`journal follow active · ${d.logs.length} shown`:'journal collector not running'; $('log-box').innerHTML=d.logs.map(x=>`<div class="log ${x.severity}"><span class="time">${new Date(x.ts*1000).toLocaleTimeString()}</span><span class="unit">${esc((x.unit||[]).join(','))}</span>${esc(x.text)}</div>`).join(''); }catch(e){$('log-status').textContent='logs unavailable';} }
 function drawChart(id,key,color,scaleTotal){ const c=$(id), dpr=devicePixelRatio||1; c.width=c.clientWidth*dpr;c.height=c.clientHeight*dpr; const g=c.getContext('2d'); g.scale(dpr,dpr); const w=c.clientWidth,h=c.clientHeight; g.clearRect(0,0,w,h); const xs=(state.history.samples||[]); if(!xs.length)return; const vals=xs.map(x=>x[key]).filter(v=>v!=null); if(vals.length<2)return; const max=scaleTotal||Math.max(...vals,1), min=0; g.strokeStyle='#272e38';g.lineWidth=1; for(let i=0;i<=3;i++){let y=h-(i/3)*h;g.beginPath();g.moveTo(34,y);g.lineTo(w-4,y);g.stroke();g.fillStyle='#667281';g.fillText(Math.round(max*i/3),0,y-3)} g.beginPath(); xs.forEach((x,i)=>{const v=x[key]; if(v==null)return; const px=34+(i/(xs.length-1))*(w-38), py=h-((v-min)/(max-min||1))*(h-10); i?g.lineTo(px,py):g.moveTo(px,py)}); g.strokeStyle=color;g.lineWidth=2;g.stroke(); }
+function renderGpuCards(d){
+  const el=$('gpu-cards'), s=d.system||{}, cards=s.gpu_cards||[];
+  const pcie=(s.pcie_rx_mb!=null||s.pcie_tx_mb!=null)
+    ? `<div class="pcie">PCIe rx ${fmt(s.pcie_rx_mb)} MB/s · tx ${fmt(s.pcie_tx_mb)} MB/s</div>` : '';
+  if(!cards.length){ el.innerHTML=pcie+'<div class="small">no per-GPU data</div>'; return; }
+  el.innerHTML=pcie+'<div class="gpu-cards">'+cards.map(g=>`
+    <div class="gcard">
+      <div class="gname">GPU ${esc(g.index)} · ${esc(g.name||'unknown')}</div>
+      <div class="gvals">
+        <span>util <b>${fmt(g.util_percent)}%</b></span>
+        <span>temp <b>${fmt(g.temp_c)}°C</b></span>
+        <span>power <b>${fmt(g.power_w)} W</b></span>
+        <span>VRAM <b>${fmt(g.mem_used_mib)}</b> / ${fmt(g.mem_total_mib)} MiB</span>
+      </div>
+    </div>`).join('')+'</div>';
+}
+
+function renderTraffic(d){
+  const t=d.door_traffic||{}, el=$('traffic');
+  if(!t.events){
+    el.innerHTML='<div class="small">no door events yet — counters start when the door posts its queue events</div>';
+    return;
+  }
+  const cells=[
+    ['admitted',t.admissions],['handoffs',t.handoffs],['cancelled',t.cancellations],
+    ['timeouts',t.timeouts],['parked',t.parked],['lock rejects',t.lock_rejections]
+  ].map(([k,v])=>`<span>${k} <b>${v??0}</b></span>`).join('');
+  const wait=t.median_queue_wait_s!=null?`<span>median queue wait <b>${fmt(t.median_queue_wait_s)}s</b></span>`:'';
+  const models=Object.entries(t.models||{});
+  const modelLine=models.length?`<div class="small">by model: ${models.map(([k,v])=>esc(k)+' '+v).join(' · ')}</div>`:'';
+  el.innerHTML=cells+wait+`<span>last event <b>${fmt(t.last_event)}s ago</b></span>`+modelLine;
+}
+
+function renderComfy(d){
+  const c=d.comfy||{}, el=$('comfy');
+  if(!c.ok){ el.innerHTML=`<div class="small">${esc(c.error||'not loaded')}</div>`; return; }
+  let html=`<div class="metricline"><span>running <b>${c.running??0}</b></span><span>pending <b>${c.pending??0}</b></span>`;
+  if(c.running_prompt_id) html+=`<span>prompt <b>${esc(c.running_prompt_id)}</b></span>`;
+  html+='</div>';
+  if((c.devices||[]).length) html+=`<div class="small">${c.devices.map(x=>esc(x.name||x.type||'device')+` · ${fmt(x.vram_free_mib)} free / ${fmt(x.vram_total_mib)} MiB`).join(' · ')}</div>`;
+  if(c.ram_free_mib!=null) html+=`<div class="small">host RAM free ${fmt(c.ram_free_mib)} MiB</div>`;
+  el.innerHTML=html;
+}
+
+function renderStt(d){
+  const s=d.stt||{}, el=$('stt');
+  const row=(label,r)=>`<div class="metricline">${label} <b>${esc(r.state||'unknown')}</b> · CPU ${fmt(r.cpu_percent)}% · RSS ${fmt(r.rss_mib)} MiB · VRAM ${fmt(r.vram_mib)} MiB</div>`;
+  el.innerHTML=row('server',s.server||{})+row('shim',s.shim||{})+`<div class="small">${esc(s.model||'')} — ${esc(s.note||'')}</div>`;
+}
+
 function renderCharts(){ if(state.activeTab!=='metrics')return; const x=state.history.samples||[], last=x[x.length-1]||{}; $('power-now').textContent=fmt(last.system_power_w,' W'); $('tps-now').textContent=`dec ${fmt(last.decode_tps)} · pp ${fmt(last.prefill_tps)}`; $('ram-now').textContent=bytes(last.ram_used_bytes); $('vram-now').textContent=`${fmt(last.vram_used_mib,' MiB')}`;
   drawChart('power-chart','system_power_w','#e0ad43'); drawChart('tps-chart','decode_tps','#42d3a3'); drawChart('ram-chart','ram_used_bytes','#5aa9e6',last.ram_total_bytes); drawChart('vram-chart','vram_used_mib','#c07de6',last.vram_total_mib);
 }

@@ -141,6 +141,7 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
         "ok": False, "error": "no metrics payload", "decode_tps": None, "prefill_tps": None,
         "phase": None, "prompt_tokens": None, "prompt_read": None, "generated": None,
         "cache_hit_rate": None, "requests": 0, "lifetime_requests": None, "source": None,
+        "gpu_cards": [], "pcie_rx_mb": None, "pcie_tx_mb": None,
     }
     if not isinstance(payload, dict) or not payload:
         out["error"] = "no metrics payload"
@@ -202,8 +203,50 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
         "requests": len(reqs),
         "lifetime_requests": (payload.get("totals") or {}).get("requests") if isinstance(payload.get("totals"), dict) else None,
         "source": "engine/metrics",
+        **gpu_cards_from_engine(payload),
     })
     return out
+
+
+def gpu_cards_from_engine(payload: Any) -> Dict[str, Any]:
+    """Pull the per-card hardware block out of an engine /metrics payload.
+
+    Strata and the DS4 engine both publish ``hardware.gpus`` with index, name,
+    util, mem_used (bytes), mem_total, temp and power.  PCIe rx/tx are aggregate
+    in the engine, so they are returned as totals rather than per card.
+    """
+    hw = payload.get("hardware") if isinstance(payload, dict) else None
+    if not isinstance(hw, dict):
+        return {"gpu_cards": [], "pcie_rx_mb": None, "pcie_tx_mb": None}
+    cards = []
+    for g in hw.get("gpus") or []:
+        if not isinstance(g, dict):
+            continue
+        def num(key):
+            v = g.get(key)
+            try:
+                return float(v) if v is not None else None
+            except Exception:
+                return None
+        used = num("mem_used")
+        total = num("mem_total")
+        p = num("power")
+        cards.append({
+            "index": int(g.get("index") or 0),
+            "name": g.get("name"),
+            "util_percent": num("util"),
+            "temp_c": num("temp"),
+            "power_w": round(p, 1) if p is not None else None,
+            "mem_used_mib": round(used / 1048576.0, 1) if used is not None else None,
+            "mem_total_mib": round(total / 1048576.0, 1) if total is not None else None,
+        })
+    def agg(key):
+        v = hw.get(key)
+        try:
+            return round(float(v), 1) if v is not None else None
+        except Exception:
+            return None
+    return {"gpu_cards": cards, "pcie_rx_mb": agg("gpu_pcie_rx_mb"), "pcie_tx_mb": agg("gpu_pcie_tx_mb")}
 
 
 async def engine_metrics(port: Optional[int], api_key: Optional[str] = None) -> Dict[str, Any]:
@@ -450,6 +493,82 @@ async def nvidia_query() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Op
             except Exception:
                 continue
     return gpus, apps, err if rc != 0 else None
+
+
+def nvidia_gpu_cards(gpus: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Map nvidia-smi rows into the same shape as the engine's hardware.gpus."""
+    cards: List[Dict[str, Any]] = []
+    for g in gpus or []:
+        try:
+            index = int(g.get("index") or 0)
+        except Exception:
+            index = 0
+        cards.append({
+            "index": index,
+            "name": g.get("name"),
+            "util_percent": g.get("util_gpu_percent"),
+            "temp_c": g.get("temperature_c"),
+            "power_w": round(float(g["power_draw_w"]), 1) if isinstance(g.get("power_draw_w"), (int, float)) else None,
+            "mem_used_mib": g.get("memory_used_mib"),
+            "mem_total_mib": g.get("memory_total_mib"),
+        })
+    return cards
+
+
+def parse_comfy_workload(stats: Any, queue: Any) -> Dict[str, Any]:
+    """Normalize ComfyUI's /system_stats + /queue into one workload block."""
+    out = {
+        "ok": False, "error": "no comfy payload",
+        "running": 0, "pending": 0, "running_prompt_id": None,
+        "devices": [], "ram_free_mib": None,
+    }
+    if not isinstance(stats, dict) and not isinstance(queue, dict):
+        return out
+    if isinstance(queue, dict):
+        running = queue.get("queue_running") or []
+        pending = queue.get("queue_pending") or []
+        out["running"] = len(running) if isinstance(running, list) else 0
+        out["pending"] = len(pending) if isinstance(pending, list) else 0
+        if running:
+            first = running[-1]
+            if isinstance(first, (list, tuple)) and len(first) > 1:
+                out["running_prompt_id"] = first[1]
+            elif isinstance(first, dict):
+                out["running_prompt_id"] = first.get("prompt_id") or first.get("id")
+    devices: List[Dict[str, Any]] = []
+    if isinstance(stats, dict):
+        for d in stats.get("devices") or []:
+            if not isinstance(d, dict):
+                continue
+            vt = d.get("vram_total")
+            vf = d.get("vram_free")
+            devices.append({
+                "name": d.get("name"),
+                "type": d.get("type"),
+                "vram_total_mib": round(float(vt) / 1048576.0, 1) if isinstance(vt, (int, float)) else None,
+                "vram_free_mib": round(float(vf) / 1048576.0, 1) if isinstance(vf, (int, float)) else None,
+            })
+        system = stats.get("system") or {}
+        rf = system.get("ram_free")
+        if isinstance(rf, (int, float)):
+            out["ram_free_mib"] = round(float(rf) / 1048576.0, 1)
+    out["devices"] = devices
+    out["ok"] = bool(isinstance(queue, dict) or isinstance(stats, dict))
+    if out["ok"]:
+        out["error"] = None
+    return out
+
+
+async def comfy_workload(port: int = 8188) -> Dict[str, Any]:
+    """Query the ComfyUI server only when the media engine holds the slot."""
+    base = f"http://127.0.0.1:{port}"
+    stats = await http_json(f"{base}/system_stats", timeout=3)
+    queue = await http_json(f"{base}/queue", timeout=3)
+    if not stats.get("ok") and not queue.get("ok"):
+        return {"ok": False, "error": stats.get("error") or queue.get("error"),
+                "running": 0, "pending": 0, "running_prompt_id": None,
+                "devices": [], "ram_free_mib": None}
+    return parse_comfy_workload(stats.get("data"), queue.get("data"))
 
 
 def parse_meminfo() -> Dict[str, float]:

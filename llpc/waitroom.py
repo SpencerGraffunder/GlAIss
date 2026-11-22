@@ -616,7 +616,7 @@ class Arbiter:
         self.idle_since = 0.0
         entry["admitted"] = True
         entry["ev"].set()
-        emit_glaiss_event("queue_admit", model=entry.get("model"), inflight=self.inflight)
+        emit_glaiss_event("queue_admit", model=entry.get("model"), req_id=entry.get("seq"), inflight=self.inflight)
 
     def _pump(self):
         now = time.monotonic()
@@ -705,6 +705,7 @@ class Arbiter:
                  "seq": self._seq, "admitted": False}
         self._seq += 1
         self._q.append(entry)
+        emit_glaiss_event("queue_arrive", model=model, req_id=entry["seq"])
         self._pump()
         if not entry["admitted"]:
             self._arm()
@@ -720,6 +721,7 @@ class Arbiter:
                     except ValueError:
                         pass
                     self._pump()
+                emit_glaiss_event("queue_timeout", model=model, req_id=entry["seq"])
                 raise QueueTimeout(model, time.monotonic() - entry["at"],
                                    self.active,
                                    blocked=not self._allowed(model))
@@ -732,6 +734,8 @@ class Arbiter:
                     except ValueError:
                         pass
                     self._pump()
+                emit_glaiss_event("request_cancel", model=model,
+                                  req_id=entry["seq"], phase="queue_wait")
                 raise
         return entry
 
@@ -1158,6 +1162,7 @@ async def handle(req: web.Request) -> web.StreamResponse:
             if req.transport is None:
                 log.info("parked request abandoned by client (%s); no swap performed",
                          extract_model(body))
+                emit_glaiss_event("request_cancel", model=extract_model(body), phase="hysteresis_park")
                 return web.Response(status=499)
             try:
                 up = await backend_up(session)
@@ -1169,6 +1174,7 @@ async def handle(req: web.Request) -> web.StreamResponse:
     if route == "wait":
         ok = await wait_for_backend(session, req)
         if ok is None:
+            emit_glaiss_event("request_cancel", model=extract_model(body), phase="parked_wait")
             return web.Response(status=499)        # client left while parked
         if not ok:
             return web.json_response(
@@ -1274,11 +1280,15 @@ async def handle(req: web.Request) -> web.StreamResponse:
                 if armed["at"] is not None:
                     log.info("client cancelled before first byte: '%s' load "
                              "cancelling, hysteresis overridden", target)
+                    emit_glaiss_event("request_cancel", model=target,
+                                      phase="before_first_byte")
                     await _cancel_load(session, st, arb, target,
                                        time.time(), last_before)
                 else:
                     log.info("client cancelled before first byte: request "
                              "dropped (no swap was triggered by it)")
+                    emit_glaiss_event("request_cancel", model=target,
+                                      phase="before_first_byte")
 
             abandoned = False
             try:
@@ -1306,6 +1316,7 @@ async def handle(req: web.Request) -> web.StreamResponse:
         if not ok:
             ok = await wait_for_backend(session, req)
             if ok is None:
+                emit_glaiss_event("request_cancel", model=extract_model(body), phase="backend_wait")
                 return web.Response(status=499)    # client left while parked
             if not ok:
                 return web.json_response(
