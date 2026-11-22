@@ -30,7 +30,12 @@ trusted VPN network (in practice: Cloudflare Access on
 - Token speed measured **by the engine** (`GET /metrics` on the loaded model's
   port): decode t/s, prefill recompute rate, KV-cache reuse, engine phase. The
   console cannot measure traffic it does not carry, so there is no proxy-side
-  estimate any more.
+  estimate any more. Two engine schemas exist and both are parsed:
+  Strata reports per-request `decode_tok_s` plus `prompt_read`/`prompt_ms`;
+  the DS4 engine (DeepSeek V4.1) reports `prompt_total` + `reused` and a null
+  `hit_rate`, so prefill is `(prompt_total - reused) / prompt_ms` and KV reuse is
+  `reused / prompt_total`. A live `tok_s` from the engine's `live` block wins over
+  the last finished request's average while it is generating.
 - Per-service rows matching the standard llpc journal command:
 
   `journalctl -u strata31 -u llama-qwen -u comfy-ui -u llama-swap -u whisper-server -u whisper-shim -u model-waitroom -u strata-dsv41.service -u llama-server`

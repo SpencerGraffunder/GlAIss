@@ -153,16 +153,40 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
         out["error"] = "engine returned a metrics payload with no data"
         return out
 
-    decode = last.get("decode_tok_s")
+    # Live progress beats the last finished request: while the engine is actively
+    # generating it reports tok_s, and a stale completed-request rate otherwise
+    # makes the decode tile look frozen.
+    decode = live.get("tok_s")
+    if not decode:
+        decode = last.get("decode_tok_s")
     if not decode:
         tail = [v for v in ((payload.get("history") or {}).get("tok_s") or [])
                 if isinstance(v, (int, float)) and v > 0]
-        decode = tail[-1] if tail else (live.get("tok_s") or None)
+        decode = tail[-1] if tail else None
+
+    # Prefill rate: strata engines report prompt_read (tokens actually recomputed,
+    # excluding KV reuse); DS4 engines report only prompt_total + reused. Both mean
+    # the same thing — tokens re-read / prompt_ms — so derive it either way instead
+    # of showing a blank tile for the DS4 schema.
+    prompt_ms_s = float(last["prompt_ms"]) / 1000.0 if last.get("prompt_ms") else None
+    prompt_total = last.get("prompt_total")
+    reused = last.get("reused")
+    newly_read = None
+    if last.get("prompt_read") is not None:
+        newly_read = float(last["prompt_read"])
+    elif prompt_total is not None and reused is not None:
+        newly_read = float(prompt_total) - float(reused)
     prefill = None
-    if last.get("prompt_ms") and last.get("prompt_read"):
-        prefill = float(last["prompt_read"]) / (float(last["prompt_ms"]) / 1000.0)
+    if newly_read is not None and newly_read > 0 and prompt_ms_s:
+        prefill = newly_read / prompt_ms_s
     if not prefill and live.get("prefill_tok_s"):
         prefill = live.get("prefill_tok_s")
+
+    # KV reuse: strata sends hit_rate; DS4 sends reused/prompt_total. Show the same
+    # operator-facing percentage for both.
+    hit_rate = last.get("hit_rate")
+    if hit_rate is None and prompt_total and reused:
+        hit_rate = float(reused) / float(prompt_total)
 
     out.update({
         "ok": True, "error": None,
@@ -170,9 +194,11 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
         "prefill_tps": round(float(prefill), 1) if prefill else None,
         "phase": live.get("phase") or live.get("state"),
         "prompt_tokens": live.get("prompt_tokens"),
-        "prompt_read": last.get("prompt_read"),
+        "prompt_read": newly_read,
+        "prompt_total": prompt_total,
+        "reused_tokens": reused,
         "generated": live.get("generated"),
-        "cache_hit_rate": last.get("hit_rate"),
+        "cache_hit_rate": round(float(hit_rate), 4) if hit_rate is not None else None,
         "requests": len(reqs),
         "lifetime_requests": (payload.get("totals") or {}).get("requests") if isinstance(payload.get("totals"), dict) else None,
         "source": "engine/metrics",

@@ -200,3 +200,43 @@ def test_on_demand_switch_parks_a_model_without_touching_units(tmp_path, monkeyp
         on = client.post("/api/control/on_demand",
                          json={"model": "Text A", "enabled": True})
     assert on.json()["on_demand_disabled"] == []
+
+
+def test_parse_engine_metrics_ds4_schema():
+    """DS4 engines report prompt_total + reused instead of prompt_read.
+
+    The console must derive the same prefill rate (tokens actually re-read / prompt_ms)
+    and the same KV-reuse percentage, or the DeepSeek tiles sit blank.
+    """
+    payload = {
+        "engine": {"model": "deepseek-v4.1-flash"},
+        "live": {"state": "reading", "phase": "reading the prompt",
+                 "prompt_tokens": 32340, "tok_s": None},
+        "requests": [{
+            "prompt_total": 31885, "reused": 25512, "prompt_read": None,
+            "prompt_ms": 23527.8, "decode_ms": 21281.3, "decode_tok_s": 18.5,
+            "hit_rate": None, "output_tokens": 394,
+        }],
+        "totals": {"requests": 9},
+        "history": {"tok_s": [16.3, 18.6]},
+    }
+    out = collectors.parse_engine_metrics(payload)
+    assert out["ok"] is True
+    assert out["decode_tps"] == 18.5, "last finished request's decode rate"
+    assert abs(out["prefill_tps"] - 270.8) < 1.0, "(31885-25512)/23.5278 s"
+    assert abs(out["cache_hit_rate"] - 0.800) < 0.01, "reused/prompt_total"
+    assert out["prompt_total"] == 31885 and out["reused_tokens"] == 25512
+    assert out["lifetime_requests"] == 9
+
+
+def test_parse_engine_metrics_strata_schema_and_live_priority():
+    """Strata's prompt_read path still works, and a live tok_s beats a finished request."""
+    payload = {
+        "live": {"phase": "generating", "tok_s": 42.0, "prompt_tokens": 100},
+        "requests": [{"prompt_read": 5000, "prompt_ms": 1000.0,
+                      "decode_tok_s": 33.0, "hit_rate": 0.5}],
+    }
+    out = collectors.parse_engine_metrics(payload)
+    assert out["prefill_tps"] == 5000.0
+    assert out["decode_tps"] == 42.0, "live tok_s wins over the completed request"
+    assert out["cache_hit_rate"] == 0.5
