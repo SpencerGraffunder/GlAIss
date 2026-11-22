@@ -17,7 +17,7 @@ class ConsoleLike:
 
 
 def make_monitor(tmp_path: Path, monkeypatch):
-    for attr in ("DEFAULT_LOCK_FILE", "DEFAULT_MANUAL_FILE"):
+    for attr in ("DEFAULT_LOCK_FILE", "DEFAULT_MANUAL_FILE", "DEFAULT_ONDEMAND_FILE"):
         monkeypatch.setattr(state, attr, tmp_path / attr.lower())
     c = ConsoleLike()
     monitor.install(c)
@@ -163,3 +163,40 @@ def test_state_endpoint_serializes_with_journal_data(tmp_path, monkeypatch):
         r = client.get("/api/state")
         assert r.status_code == 200, r.text[:400]
         assert "services" in r.json()
+
+
+def test_on_demand_switch_parks_a_model_without_touching_units(tmp_path, monkeypatch):
+    """The checkbox in the Models tab is a routing switch: it writes the opt-out
+    list the door reads, and never loads, unloads or locks anything."""
+    c, m = make_monitor(tmp_path, monkeypatch)
+
+    async def fake_waitroom():
+        return {"loaded_model": "Text A", "active": None, "inflight": 0, "waiting": []}
+
+    async def fake_registry():
+        return m.registry_models, None
+
+    monkeypatch.setattr(collectors, "registry_models", fake_registry)
+    monkeypatch.setattr(collectors, "waitroom_snapshot", fake_waitroom)
+    snap = asyncio.run(m.snapshot())
+    assert [r["on_demand"] for r in snap["models"]] == [True, True]
+    assert snap["model"]["on_demand_disabled"] == []
+
+    with TestClient(c.app) as client:
+        assert client.post("/api/control/on_demand", json={}).status_code == 400
+        # alias spelling resolves to the catalog name
+        off = client.post("/api/control/on_demand", json={"model": "a", "enabled": False})
+        assert off.status_code == 200, off.text
+        assert off.json()["model"] == "Text A"
+        assert off.json()["on_demand_disabled"] == ["Text A"]
+
+    snap = asyncio.run(m.snapshot())
+    assert {r["name"]: r["on_demand"] for r in snap["models"]} == {
+        "Text A": False, "Media B": True}
+    assert snap["model"]["on_demand_disabled"] == ["Text A"]
+    assert state.read_lock() is None, "parking a model must not create a lock"
+
+    with TestClient(c.app) as client:
+        on = client.post("/api/control/on_demand",
+                         json={"model": "Text A", "enabled": True})
+    assert on.json()["on_demand_disabled"] == []

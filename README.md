@@ -17,16 +17,27 @@ trusted VPN network (in practice: Cloudflare Access on
 
 ## What it shows
 
-- llpc waitroom state: loaded model, active arbiter model, in-flight requests,
-  ordered waiting models, swap hysteresis, quantum timer, handoffs, Comfy claim,
-  intent, manual lock, and manual-control suppression.
+- llpc waitroom state: loaded model, what is generating right now, in-flight
+  requests, ordered waiting models, swap hysteresis, quantum timer, handoffs,
+  Comfy claim, intent, manual lock, manual-control suppression, and which models
+  are switched off for on-demand loading.
+- **On-demand model switch (the Models tab checkbox).** Off means the door will
+  not load that model by itself: a request naming it parks in the queue until
+  you switch it back on or load it by hand, while requests behind it for an
+  enabled model are admitted ahead of it. A model already generating finishes
+  its stream; nothing is unloaded and no unit is touched. CLI equivalent:
+  `model-control.py on-demand "<model>" --off`.
 - Token speed measured **by the engine** (`GET /metrics` on the loaded model's
   port): decode t/s, prefill recompute rate, KV-cache reuse, engine phase. The
   console cannot measure traffic it does not carry, so there is no proxy-side
   estimate any more.
 - Per-service rows matching the standard llpc journal command:
 
-  `journalctl -u strata31 -u llama-qwen -u comfy-ui -u llama-swap -u whisper-server -u whisper-shim -u switcheroo-control -u model-waitroom -u strata-dsv41.service -u llama-server`
+  `journalctl -u strata31 -u llama-qwen -u comfy-ui -u llama-swap -u whisper-server -u whisper-shim -u model-waitroom -u strata-dsv41.service -u llama-server`
+
+  (Only the AI services. `switcheroo-control`, the NVIDIA PRIME switch proxy,
+  was dropped on 2026-11-21 — it is not a model service and never logged
+  anything worth watching.)
 
 - Service CPU, RSS, VRAM, PID, state, restart count, recent log count, last log,
   and a live journal console for the same units.
@@ -151,6 +162,8 @@ The console's entire HTTP surface — anything else is a 404:
 - `POST /api/control/lock`
 - `POST /api/control/unlock`
 - `POST /api/control/resume_auto`
+- `POST /api/control/on_demand` — `{"model": "...", "enabled": true|false}`;
+  parks a model out of the on-demand path (no unit is loaded, unloaded or locked)
 
 `/api/state` is the single read endpoint the page uses; the old slice aliases
 (`/api/model`, `/api/services`, `/api/system`, `/api/control/jobs`) and the

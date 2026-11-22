@@ -749,8 +749,99 @@ async def t_arbiter_acquire_cancel_no_ghost():
         ck(s1 == 200 and arb.inflight == 0, "acquire-cancel: holder unaffected")
 
 
-TESTS = [v for k, v in sorted(globals().items()) if k.startswith("t_")]
+# -------------------------------------------------- on-demand opt-out (Spec 2026-11-21)
+# A model switched off under Models · On demand never loads by itself: the
+# request naming it parks, traffic behind it for an enabled model still flows,
+# and a model that is already generating finishes what it started.
 
+
+async def t_ondemand_parks_and_lets_enabled_traffic_pass():
+    allow = {"Flash"}
+    arb = W.Arbiter(allowed=lambda m: m in allow)
+    parked = asyncio.create_task(arb.acquire("Parked Model", 5.0))
+    await asyncio.sleep(0.05)
+    snap = arb.snapshot()
+    ck(snap["active"] is None and snap["inflight"] == 0,
+       "ondemand off: a parked model does not take the slot")
+    ck(snap["waiting"] and snap["waiting"][0]["blocked"],
+       "ondemand off: the parked waiter is reported as blocked")
+    flash = asyncio.create_task(arb.acquire("Flash", 5.0))
+    await asyncio.sleep(0.05)
+    ck(arb.active == "Flash" and arb.inflight == 1,
+       "ondemand off: a later request for an enabled model goes ahead of it")
+    await flash
+    arb.release()
+    arb.batch_at = 0.0                      # the batch window is spent
+    allow.add("Parked Model")
+    arb._pump()
+    await asyncio.wait_for(parked, 2.0)
+    ck(arb.active == "Parked Model", "ondemand on again: the parked waiter gets the slot")
+    arb.release()
+
+
+async def t_ondemand_running_model_drains_then_releases():
+    allow = {"A", "B"}
+    arb = W.Arbiter(allowed=lambda m: m in allow)
+    await arb.acquire("A", 5.0)
+    ck(arb.active == "A" and arb.inflight == 1, "ondemand off mid-run: A holds the slot")
+    allow.discard("A")
+    b = asyncio.create_task(arb.acquire("B", 5.0))
+    await asyncio.sleep(0.05)
+    ck(arb.active == "A" and arb.inflight == 1,
+       "ondemand off mid-run: the running generation is not cut off")
+    ck(any(w["model"] == "B" for w in arb.snapshot()["waiting"]),
+       "ondemand off mid-run: the next model waits for the drain")
+    arb.release()
+    await asyncio.wait_for(b, 2.0)
+    ck(arb.active == "B" and arb.inflight == 1,
+       "ondemand off mid-run: the slot passes on once the stream finished")
+    arb.release()
+
+
+async def t_ondemand_parked_waiter_does_not_steal_the_slot():
+    allow = {"A"}
+    arb = W.Arbiter(allowed=lambda m: m in allow)
+    await arb.acquire("A", 5.0)
+
+    async def parked_wait():
+        try:
+            await arb.acquire("Parked", 0.6)
+            return "admitted"
+        except W.QueueTimeout as exc:
+            return f"timeout:{exc.blocked}"
+
+    waiter = asyncio.create_task(parked_wait())
+    await asyncio.sleep(0.05)
+    arb.release()
+    arb.batch_at = 0.0
+    arb._pump()
+    result = await waiter
+    ck(result == "timeout:True",
+       "a parked waiter is never admitted and times out saying it is off-demand")
+    ck(arb.active == "A" and arb.handoffs == 1,
+       "a parked waiter alone does not hand the slot to nobody")
+
+
+async def t_ondemand_door_parks_one_request_and_serves_another():
+    allow = {FLASH}
+    async with Harness(running=[FLASH], quantum=30.0, idle_switch=0.05,
+                       wait_s=8.0) as h:
+        h.client.server.app["arb"] = W.Arbiter(allowed=lambda m: m in allow)
+        parked = asyncio.create_task(h.post_chat(DS))
+        await asyncio.sleep(0.25)
+        s, b = await h.post_chat(FLASH)
+        ck(s == 200 and b["via"] == "gate",
+           "ondemand door: the enabled model is served while the other is parked")
+        async with h.client.get("/state") as r:
+            d = await r.json()
+        ck(any(w["model"] == DS and w["blocked"] for w in d["waiting"]),
+           "ondemand door: /state marks the parked request so the console can explain it")
+        allow.add(DS)
+        s2, _ = await parked
+        ck(s2 == 200, "ondemand door: the parked request runs once the model is back on")
+
+
+TESTS = [v for k, v in sorted(globals().items()) if k.startswith("t_")]
 
 async def main():
     for t in TESTS:

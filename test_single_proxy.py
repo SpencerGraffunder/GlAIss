@@ -39,7 +39,7 @@ EXPECTED_ROUTES = {
     "/api/health", "/api/state", "/api/history", "/api/logs",
     "/internal/waitroom/events",
     "/api/control/load", "/api/control/unload", "/api/control/lock",
-    "/api/control/unlock", "/api/control/resume_auto",
+    "/api/control/unlock", "/api/control/resume_auto", "/api/control/on_demand",
 }
 
 

@@ -9,6 +9,11 @@ Production semantics:
 - ``model-lock.json`` means only the named catalog model may hold the GPU slot.
 - ``manual-control.json`` means operator control is active and automatic model
   backstops should stand down until the suppression deadline passes.
+- ``model-ondemand.json`` lists models that are OFF the on-demand path: the
+  waitroom never loads them for a chat request, so a request naming one simply
+  waits while requests for enabled models are admitted ahead of it. A manual
+  load (console/CLI → ``swap-to.sh``) still works. Absent file = everything is
+  on-demand, which is the default state of a fresh box.
 """
 
 from __future__ import annotations
@@ -41,6 +46,9 @@ DEFAULT_LASTMODEL_FILE = Path(
 )
 DEFAULT_SWAP_DESIRED_FILE = Path(
     os.environ.get("SWAP_DESIRED_FILE", str(DEFAULT_STATE_DIR / "swap-desired"))
+)
+DEFAULT_ONDEMAND_FILE = Path(
+    os.environ.get("MODEL_ONDEMAND_FILE", str(DEFAULT_STATE_DIR / "model-ondemand.json"))
 )
 
 DEFAULT_MANUAL_SUPPRESS_S = float(os.environ.get("MANUAL_CONTROL_SUPPRESS_S", "900"))
@@ -141,6 +149,60 @@ def lock_error_payload(lock: Optional[Dict[str, Any]] = None) -> Tuple[int, Dict
             }
         },
     )
+
+
+def read_on_demand(path: Optional[Path] = None) -> Dict[str, Any]:
+    """The on-demand opt-out list: models the waitroom must not load on its own.
+
+    Missing file / unreadable file = nobody is opted out. Only ``disabled`` is
+    authoritative; the rest is provenance for the dashboard.
+    """
+    data = _read_json(path or DEFAULT_ONDEMAND_FILE) or {}
+    disabled = [str(x).strip() for x in (data.get("disabled") or []) if str(x).strip()]
+    return {
+        "version": 1,
+        "disabled": disabled,
+        "updated_at": data.get("updated_at"),
+        "updated_by": data.get("updated_by"),
+    }
+
+
+def on_demand_blocked(
+    model: Optional[str],
+    disabled: Optional[Any] = None,
+    path: Optional[Path] = None,
+) -> bool:
+    """True when `model` (name or alias spelling) is off the on-demand path."""
+    if not model:
+        return False
+    if disabled is None:
+        disabled = read_on_demand(path)["disabled"]
+    target = _normalize_model(model)
+    return any(_normalize_model(d) == target for d in (disabled or []))
+
+
+def set_model_on_demand(
+    model: str,
+    enabled: bool,
+    *,
+    path: Optional[Path] = None,
+    by: str = "glaiss",
+) -> Dict[str, Any]:
+    """Opt a model in to (or out of) automatic on-demand loading."""
+    if not (model or "").strip():
+        raise ValueError("model required")
+    current = read_on_demand(path)["disabled"]
+    disabled = [d for d in current if _normalize_model(d) != _normalize_model(model)]
+    if not enabled:
+        disabled.append(model.strip())
+    payload = {
+        "version": 1,
+        "disabled": sorted(disabled, key=str.casefold),
+        "updated_at": _now(),
+        "updated_by": by,
+    }
+    _write_json_atomic(path or DEFAULT_ONDEMAND_FILE, payload)
+    return payload
 
 
 def is_backstop_suppressed(

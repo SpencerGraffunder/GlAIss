@@ -15,7 +15,6 @@ DEFAULT_UNITS = [
     "llama-swap",
     "whisper-server",
     "whisper-shim",
-    "switcheroo-control",
     "model-waitroom",
     "strata-dsv41",
 ]

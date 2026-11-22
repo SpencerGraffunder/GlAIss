@@ -51,7 +51,6 @@ SERVICE_ROWS: List[Tuple[str, str, Optional[str]]] = [
     ("llama-swap", "llama-swap", "llama-swap gatekeeper"),
     ("whisper-server", "whisper-server", "Whisper.cpp GPU STT"),
     ("whisper-shim", "whisper-shim", "OpenAI STT shim"),
-    ("switcheroo-control", "switcheroo-control", "PRIME switch proxy"),
     ("model-waitroom", "model-waitroom", "llpc model waitroom"),
     ("strata-dsv41.service", "strata-dsv41", "Strata DeepSeek V4.1"),
     ("llama-server", None, "llama-server process under llama-qwen"),

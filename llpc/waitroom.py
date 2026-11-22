@@ -214,6 +214,43 @@ def control_manual_payload():
     return mctl.read_manual()
 
 
+# --------------------------------------------------- on-demand opt-out gate
+# The console (or `model-control.py on-demand`) writes ~/.llama-swap/
+# model-ondemand.json; the arbiter reads it through this 1-second cache, so a
+# checkbox flip needs no IPC and a pump storm costs at most one read per second.
+# If model_control is unavailable the gate FAILS OPEN — routing must never
+# depend on the optional control module (same rule as the manual lock).
+_ONDEMAND_CACHE = {"at": 0.0, "disabled": []}
+ONDEMAND_REFRESH_S = 1.0
+# A parked waiter must notice a re-enabled model without needing new traffic:
+# the arbiter re-pumps on this tick while anything is parked.
+ONDEMAND_POLL_S = 2.0
+
+
+def on_demand_disabled(now=None) -> list:
+    now = time.time() if now is None else now
+    if (now - _ONDEMAND_CACHE["at"]) >= ONDEMAND_REFRESH_S:
+        _ONDEMAND_CACHE["at"] = now
+        if mctl is not None:
+            try:
+                _ONDEMAND_CACHE["disabled"] = list(
+                    mctl.read_on_demand().get("disabled") or [])
+            except Exception as e:
+                log.debug("on-demand list unreadable: %s", e)
+    return _ONDEMAND_CACHE["disabled"]
+
+
+def model_on_demand(model) -> bool:
+    """False means the operator took this model off the on-demand path."""
+    disabled = on_demand_disabled()
+    if mctl is None or not disabled:
+        return True
+    try:
+        return not mctl.on_demand_blocked(model, disabled)
+    except Exception:
+        return True
+
+
 def lock_rejection_if_needed(st, model_name):
     """Return an aiohttp JSON rejection when a manual lock forbids `model_name`."""
     lock = control_lock_payload()
@@ -488,13 +525,20 @@ class SwapState:
 # -------------------------------------------------------------------- arbiter
 
 class QueueTimeout(Exception):
-    """A queued request ran out of patience while another model held the slot."""
+    """A queued request ran out of patience while another model held the slot,
+    or while it sat parked because the operator took its model off the
+    on-demand path."""
 
-    def __init__(self, model, waited, active):
-        self.model, self.waited, self.active = model, waited, active
-        super().__init__(
-            f"{model!r} waited {waited:.0f}s for the model slot; the box is "
-            f"serving {active!r}")
+    def __init__(self, model, waited, active, blocked=False):
+        self.model, self.waited, self.active, self.blocked = model, waited, active, blocked
+        if blocked:
+            msg = (f"{model!r} waited {waited:.0f}s but is switched OFF for "
+                   f"on-demand loading, so nothing will load it; re-enable it in "
+                   f"the GlAIss Models tab (On demand) or load it manually")
+        else:
+            msg = (f"{model!r} waited {waited:.0f}s for the model slot; the box "
+                   f"is serving {active!r}")
+        super().__init__(msg)
 
 
 class Arbiter:
@@ -517,7 +561,10 @@ class Arbiter:
     the actual evict/load.
     """
 
-    def __init__(self):
+    def __init__(self, allowed=None):
+        # allowed(model) -> bool: the on-demand opt-out gate. None = allow all,
+        # which keeps the arbiter testable in isolation and fail-open by default.
+        self._allowed = allowed or (lambda model: True)
         self._q = []           # waiting entries, arrival order
         self._seq = 0
         self._timer = None
@@ -540,7 +587,9 @@ class Arbiter:
             "quantum_left_s": left,
             "handoffs": self.handoffs,
             "waiting": [{"model": e["model"],
-                         "waited_s": round(now - e["at"], 1)} for e in self._q],
+                         "waited_s": round(now - e["at"], 1),
+                         "blocked": not self._allowed(e["model"])}
+                        for e in self._q],
         }
 
     # -- internals ----------------------------------------------------
@@ -550,7 +599,16 @@ class Arbiter:
         return (now - self.batch_at) >= QUANTUM_S or self.batch_n >= QUANTUM_N
 
     def _others_waiting(self):
-        return any(e["model"] != self.active for e in self._q)
+        # Parked (off-demand) waiters are not "somebody else waiting": they are
+        # waiting on the operator, not on the slot, so they must not make the
+        # active model give the slot up to nobody.
+        return any(e["model"] != self.active and self._allowed(e["model"])
+                   for e in self._q)
+
+    def _blocked_waiting(self):
+        """Waiters the operator took off the on-demand path. They hold their
+        place in line for visibility but never hold up anyone else."""
+        return [e for e in self._q if not self._allowed(e["model"])]
 
     def _admit(self, entry):
         self.inflight += 1
@@ -563,10 +621,21 @@ class Arbiter:
     def _pump(self):
         now = time.monotonic()
         for _ in range(1000):          # bounded: each pass admits or switches
-            if self.active is None:
-                if not self._q:
+            # A model the operator took out of circulation keeps serving what is
+            # already in flight, then gives the slot up; nothing new is admitted
+            # to it while it is off the on-demand path.
+            if self.active and not self._allowed(self.active):
+                if self.inflight:
                     return
-                self.active = self._q[0]["model"]
+                self.active = None
+                continue
+            if self.active is None:
+                # First waiter still on the on-demand path, not strictly the
+                # head of the queue: a parked model must not block traffic.
+                nxt = next((e for e in self._q if self._allowed(e["model"])), None)
+                if nxt is None:
+                    return
+                self.active = nxt["model"]
                 self.batch_at = now
                 self.batch_n = 0
                 self.idle_since = 0.0
@@ -574,7 +643,8 @@ class Arbiter:
                 emit_glaiss_event("arbiter_handoff", model=self.active, handoffs=self.handoffs)
             same = [e for e in self._q if e["model"] == self.active]
             # Serve the active model while its quantum is fresh, or always when
-            # nobody else is waiting (a single-model box never stalls).
+            # nobody else is waiting (a single-model box never stalls). Blocked
+            # waiters do not count as "somebody else" — they are not next.
             if same and (not self._expired(now) or not self._others_waiting()):
                 for e in same:
                     self._q.remove(e)
@@ -593,16 +663,26 @@ class Arbiter:
     def _arm(self):
         """Re-pump when the quantum expires or an idle slot matures: a waiter
         must not depend on another request arriving to be served."""
-        if not self._q or not self.active:
+        if not self._q:
+            return
+        parked = bool(self._blocked_waiting())
+        if not self.active and not parked:
             return
         now = time.monotonic()
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        delay = max(0.2, (self.batch_at + QUANTUM_S) - now)
-        if self.inflight == 0 and self.idle_since:
-            delay = min(delay, max(0.2, IDLE_SWITCH_S - (now - self.idle_since)))
+        if not self.active:
+            # Nothing runnable: only parked waiters. Tick slowly so flipping a
+            # model back on gets them moving without waiting for new traffic.
+            delay = ONDEMAND_POLL_S
+        else:
+            delay = max(0.2, (self.batch_at + QUANTUM_S) - now)
+            if self.inflight == 0 and self.idle_since:
+                delay = min(delay, max(0.2, IDLE_SWITCH_S - (now - self.idle_since)))
+            if parked:
+                delay = min(delay, ONDEMAND_POLL_S)
         # An earlier timer may be armed for the longer quantum: replace it so a
         # freed slot is handed over on the idle deadline, not minutes later.
         if self._timer is not None:
@@ -641,7 +721,8 @@ class Arbiter:
                         pass
                     self._pump()
                 raise QueueTimeout(model, time.monotonic() - entry["at"],
-                                   self.active)
+                                   self.active,
+                                   blocked=not self._allowed(model))
             except asyncio.CancelledError:
                 if entry["admitted"]:
                     self.release()
@@ -1028,6 +1109,7 @@ async def handle(req: web.Request) -> web.StreamResponse:
             "last_swap_unix": st.last_swap if st.last_swap and st.last_swap > 0 else None,
             "lock": control_lock_payload(),
             "manual_control": control_manual_payload(),
+            "on_demand_disabled": on_demand_disabled(),
             "model_control_module": mctl is not None,
         }
         if arb is not None:
@@ -1300,7 +1382,7 @@ async def _cancel_load(session: ClientSession, st: SwapState, arb, target,
 async def on_startup(app: web.Application) -> None:
     app["session"] = ClientSession()
     app["swap"] = SwapState(app["session"])
-    app["arb"] = Arbiter()
+    app["arb"] = Arbiter(allowed=model_on_demand)
     log.info("waiting room open on :%s -> gatekeeper %s (fail-open per model "
              "port, cap %.0fs, quantum %.0fs/%d)",
              os.environ.get("WAITROOM_PORT", "8080"), SWAP, WAIT_S,

@@ -322,6 +322,7 @@ class Monitor:
 
         lock = state.read_lock()
         manual = state.read_manual()
+        on_demand_disabled = state.read_on_demand()["disabled"]
         current_loaded_model = waitroom.get("loaded_model") or waitroom.get("active")
         loaded_state = None
         loaded_unit = None
@@ -338,6 +339,7 @@ class Monitor:
                 **m,
                 "loaded": bool(current_loaded_model and current_loaded_model == name),
                 "locked": bool(lock and state._normalize_model(lock.get("model")) == state._normalize_model(name)),
+                "on_demand": not state.on_demand_blocked(name, on_demand_disabled),
                 "visible_in_picker": not bool(m.get("unlisted")),
             })
 
@@ -371,6 +373,7 @@ class Monitor:
                 "llama_swap_running": running,
                 "lock": lock,
                 "manual_control": manual,
+                "on_demand_disabled": on_demand_disabled,
                 "model_control_state_files": {
                     "lock": str(state.DEFAULT_LOCK_FILE),
                     "manual": str(state.DEFAULT_MANUAL_FILE),
@@ -561,6 +564,29 @@ def install(app_module) -> None:
     async def control_resume_auto():
         result = await control.resume_auto()
         return JSONResponse(result)
+
+    @router.post("/api/control/on_demand")
+    async def control_on_demand(request: Request):
+        """Switch a model in or out of the on-demand path (no unit is touched).
+
+        Off means: the waitroom will not load this model for a chat request, so
+        a request naming it parks in the queue until it is switched back on or
+        someone loads the model by hand through /api/control/load.
+        """
+        data = await request.json()
+        model = data.get("model")
+        if not model:
+            return JSONResponse({"error": {"message": "model is required"}}, status_code=400)
+        target = C.resolve_registry_model(monitor.registry_models, model) or {}
+        name = target.get("name") or model
+        enabled = bool(data.get("enabled", True))
+        payload = state.set_model_on_demand(name, enabled, by="glaiss")
+        hub = monitor.hub()
+        if hub:
+            await hub.emit({"type": "on_demand", "model": name, "enabled": enabled,
+                            "disabled": payload["disabled"], "ts": time.time()})
+        return JSONResponse({"ok": True, "model": name, "enabled": enabled,
+                             "on_demand_disabled": payload["disabled"]})
 
     before = list(app.router.routes)
     app.include_router(router)

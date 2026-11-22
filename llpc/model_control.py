@@ -43,6 +43,9 @@ clear_lock = state.clear_lock
 clear_manual = state.clear_manual
 resume_auto = state.resume_auto
 read_lastswap = state.read_lastswap
+read_on_demand = state.read_on_demand
+on_demand_blocked = state.on_demand_blocked
+set_model_on_demand = state.set_model_on_demand
 
 try:  # the CLI needs collectors; the waitroom does not
     from glaiss_app import collectors as _collectors
@@ -105,6 +108,7 @@ def cmd_status(args):
 def cmd_list(args):
     registry, err = C.registry_models_sync()
     lock = state.read_lock()
+    off_demand = state.read_on_demand()["disabled"]
     loaded = current_loaded_model()
     rows = []
     for m in registry or []:
@@ -112,6 +116,7 @@ def cmd_list(args):
             **m,
             "loaded": m.get("name") == loaded,
             "locked": bool(lock and state._normalize_model(lock.get("model")) == state._normalize_model(m.get("name"))),
+            "on_demand": not state.on_demand_blocked(m.get("name"), off_demand),
         })
     print_json({"ok": err is None, "models": rows, "error": err})
 
@@ -132,6 +137,15 @@ def cmd_unlock(args):
 def cmd_resume_auto(args):
     state.resume_auto()
     print_json({"ok": True})
+
+
+def cmd_on_demand(args):
+    """Park a model (or put it back in service) for automatic on-demand loads."""
+    m = resolve(args.model)
+    enabled = not args.off
+    payload = state.set_model_on_demand(m["name"], enabled, by="cli")
+    print_json({"ok": True, "model": m["name"], "on_demand": enabled,
+                "off_demand": payload["disabled"]})
 
 
 def cmd_load(args):
@@ -206,6 +220,11 @@ def main():
     l = sub.add_parser("lock"); l.add_argument("model"); l.add_argument("--reason", default="manual lock"); l.set_defaults(fn=cmd_lock)
     sub.add_parser("unlock").set_defaults(fn=cmd_unlock)
     sub.add_parser("resume-auto").set_defaults(fn=cmd_resume_auto)
+    od = sub.add_parser("on-demand")
+    od.add_argument("model")
+    od.add_argument("--off", action="store_true",
+                    help="Park it: a request naming this model waits in the queue instead of loading it (a manual 'load' still works)")
+    od.set_defaults(fn=cmd_on_demand)
     ld = sub.add_parser("load"); ld.add_argument("model"); ld.add_argument("--force", action="store_true", help="Only for emergency generation tear-down before swap-to"); ld.add_argument("--lock", action="store_true"); ld.add_argument("--dry-run", action="store_true"); ld.set_defaults(fn=cmd_load)
     ul = sub.add_parser("unload"); ul.add_argument("model"); ul.add_argument("--force", action="store_true", help="Ignore waitroom inflight guard; emergency only"); ul.add_argument("--break-lock", action="store_true"); ul.add_argument("--dry-run", action="store_true"); ul.set_defaults(fn=cmd_unload)
     args = p.parse_args()

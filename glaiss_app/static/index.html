@@ -10,49 +10,87 @@
     --text: #d8dee6; --dim: #808b98; --accent: #42d3a3; --accent2: #5aa9e6;
     --warn: #e0ad43; --err: #e36161; --ok: #48bd7d; --mono: "SF Mono","JetBrains Mono",Consolas,monospace;
   }
-  *{box-sizing:border-box} html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font:13px var(--mono)}
+  *{box-sizing:border-box} html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:13px var(--mono)}
+  html,body{height:100%}
   body{display:flex;flex-direction:column;overflow:hidden}
-  button{font:inherit}
-  #topbar{border-bottom:1px solid var(--border);background:var(--panel);padding:9px 14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  button{font:inherit} input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;margin:0}
+  #topbar{border-bottom:1px solid var(--border);background:var(--panel);padding:9px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
   #brand{font-weight:800;letter-spacing:1px;color:var(--accent)} #brand small{color:var(--dim);font-weight:400;margin-left:7px}
-  .stats{display:flex;gap:15px;flex-wrap:wrap;align-items:center}.stat{min-width:72px}.stat .label{font:10px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.55px}
+  /* Only shown when something is actually broken; when healthy the row is empty. */
+  #offline{display:none;align-items:center;gap:6px;border:1px solid #753137;background:#3d1d22;color:#ffb8ba;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700}
+  #offline.show{display:inline-flex}
+  #offline .dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
+  .stats{display:flex;gap:15px;flex-wrap:wrap;align-items:center;min-width:0}.stat{min-width:66px}.stat .label{font:10px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.55px}
   .stat .value{font-size:14px;font-weight:700;margin-top:2px}.v-accent{color:var(--accent)}.v-blue{color:var(--accent2)}.v-warn{color:var(--warn)}.v-err{color:var(--err)}
-  #monitor-dot,#ws-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--err);margin-right:5px}
-  .dot-ok{background:var(--ok)!important}
   .ghost{background:#1c2129;border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 10px;cursor:pointer}
-  .ghost:hover{border-color:var(--accent2)}
+  .ghost:hover:not(:disabled){border-color:var(--accent2)}
+  .ghost:disabled{opacity:.4;cursor:not-allowed}
   .danger{background:#3d1d22;border-color:#753137;color:#ffb8ba!important}
-  #queue-strip{border-bottom:1px solid var(--border);background:var(--panel2);padding:8px 14px;display:flex;align-items:center;gap:12px;overflow:auto;min-height:54px}
-  .qs-title{color:var(--dim);font:10px var(--mono);text-transform:uppercase;letter-spacing:1px}.qboxes{display:flex;gap:9px}.qbox{min-width:175px;border:1px solid var(--border);background:#1b2027;border-radius:5px;padding:7px 9px}.qbox.running{border-color:var(--accent)}.qbox.queued{border-style:dashed;opacity:.85}
+  .danger:hover:not(:disabled){border-color:var(--err)}
+  /* Queue strip: one row, always swipeable left/right, never a vertical list. */
+  #queue-strip{border-bottom:1px solid var(--border);background:var(--panel2);padding:8px 14px;display:flex;align-items:center;gap:12px;overflow-x:auto;overflow-y:hidden;min-height:54px}
+  .qs-title{color:var(--dim);font:10px var(--mono);text-transform:uppercase;letter-spacing:1px;flex:0 0 auto;cursor:help}
+  .qboxes{display:flex;gap:9px;flex-wrap:nowrap;min-width:0}.qbox{flex:0 0 auto;min-width:180px;border:1px solid var(--border);background:#1b2027;border-radius:5px;padding:7px 9px}
+  .qbox.running{border-color:var(--accent)}.qbox.queued{border-style:dashed;opacity:.9}.qbox.done{opacity:.6;border-color:#2f3a44}.qbox.blocked{border-color:var(--warn);opacity:.75}
   .qbox .a{display:flex;justify-content:space-between;gap:8px;align-items:center}.qbox .m{font-size:11px;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;margin-top:5px}.qbox b{color:var(--text)}
-  #last-event{margin-left:auto;color:var(--dim);font-size:11px;white-space:nowrap}
+  #queue-hint{color:var(--dim);font-size:11px;font-style:italic}
+  #last-event{margin-left:auto;color:var(--dim);font-size:11px;white-space:nowrap;flex:0 0 auto}
   #ops{flex:1 1 auto;min-height:260px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;background:#0d1014}
-  #ops-tabs{border-bottom:1px solid var(--border);display:flex;gap:2px;padding:6px 8px;background:var(--panel);align-items:center;overflow:auto}
-  .tab{background:none;border:0;color:var(--dim);padding:7px 11px;cursor:pointer;border-bottom:2px solid transparent}.tab.active{color:var(--accent);border-bottom-color:var(--accent)}.tab-count{color:var(--accent);font-size:10px}
-  #ops-actions{margin-left:auto;display:flex;gap:7px;align-items:center}.jobline{font-size:11px;color:var(--dim);max-width:350px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* Wraps rather than scrolls: the action chips and buttons must never be
+     reachable only by a hidden sideways scroll inside this bar (that is what
+     clipped the old status text to an inaccessible "I…" on a phone). */
+  #ops-tabs{border-bottom:1px solid var(--border);display:flex;gap:2px;padding:6px 8px;background:var(--panel);align-items:center;flex-wrap:wrap}
+  .tab{background:none;border:0;color:var(--dim);padding:7px 11px;cursor:pointer;border-bottom:2px solid transparent;flex:0 0 auto}.tab.active{color:var(--accent);border-bottom-color:var(--accent)}.tab-count{color:var(--accent);font-size:10px}
+  #ops-actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  /* The two operator switches, shown as state first and action second, so you
+     can read whether they are engaged without pressing anything. */
+  .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700;color:var(--dim);background:#161a20;cursor:help;white-space:nowrap}
+  .chip .dot{width:8px;height:8px;border-radius:50%;background:#4a5563}
+  .chip.on{color:var(--accent);border-color:#255a49;background:#12291f}.chip.on .dot{background:var(--accent)}
+  .chip.hold{color:var(--warn);border-color:#5d4a20;background:#241d0f}.chip.hold .dot{background:var(--warn)}
+  #job-badge{display:none;font-size:11px;color:var(--warn);white-space:nowrap}#job-badge.show{display:inline}
   .ops-body{flex:1;min-height:0;overflow:auto;padding:10px}.tabpane{display:none;height:100%}.tabpane.active{display:block}
-  .grid{display:grid;grid-template-columns:360px minmax(520px,1fr);gap:10px}.panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}.panel h3{margin:0 0 8px;font-size:11px;color:var(--accent2);text-transform:uppercase;letter-spacing:1px}
+  .grid{display:grid;grid-template-columns:340px minmax(520px,1fr);gap:10px}.panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}.panel h3{margin:0 0 8px;font-size:11px;color:var(--accent2);text-transform:uppercase;letter-spacing:1px}
   .kv{display:grid;grid-template-columns:125px 1fr;gap:6px 9px;font-size:12px}.kv div:nth-child(odd){color:var(--dim)}.badge{display:inline-block;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:800;background:#2b333d;color:var(--dim)}.badge.loaded{background:#15392d;color:var(--accent)}.badge.locked{background:#3c311b;color:var(--warn)}.badge.error{background:#3c1d22;color:var(--err)}
-  .wrq{margin-top:12px}.wrq .lane{display:flex;gap:7px;flex-wrap:wrap}.wrq .lanebox{border:1px dashed var(--border);border-radius:5px;padding:7px;min-width:160px}.wrq .lanebox.active{border-style:solid;border-color:var(--accent)}.wrq .lanebox small{display:block;color:var(--dim)}
+  .banner{display:none;border:1px solid #5d4a20;background:#241d0f;color:#f1cc7d;border-radius:5px;padding:7px 9px;font-size:11px;margin:0 0 8px}.banner.show{display:block}
   table{width:100%;border-collapse:collapse;font-size:11px} th{position:sticky;top:0;background:#1a1f26;color:var(--dim);text-align:left;padding:7px 8px;font:10px var(--mono);text-transform:uppercase;border-bottom:1px solid var(--border)} td{padding:7px 8px;border-bottom:1px solid #20252c;vertical-align:middle} tr:hover td{background:#171b21} .num{text-align:right;white-space:nowrap}.small{font-size:10px;color:var(--dim)}
+  td.oncol{text-align:center}
   .btns{display:flex;gap:4px;flex-wrap:wrap}.mini{background:#20262e;border:1px solid var(--border);border-radius:3px;color:var(--text);padding:3px 6px;cursor:pointer;font-size:10px}.mini:hover:not(:disabled){border-color:var(--accent)}.mini.warn:hover{border-color:var(--warn);color:var(--warn)}.mini:disabled{opacity:.38;cursor:not-allowed}
   .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}.toolbar select,.toolbar input{background:#0b0d10;border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px;font:11px var(--mono)}
   #log-box{height:calc(100% - 36px);overflow:auto;background:#080a0c;border:1px solid var(--border);border-radius:5px;padding:7px;line-height:1.35}
   .log{padding:2px 0;border-bottom:1px solid #15191e}.log .time{color:#5b6672;margin-right:6px}.log .unit{color:var(--accent2);margin-right:6px}.log.error{color:#ff9d9d}.log.warn{color:#f1cc7d}
   .charts{display:grid;grid-template-columns:1fr 1fr;gap:10px}.chart{height:190px;background:#090b0e;border:1px solid var(--border);border-radius:6px;padding:8px} .chart canvas{width:100%;height:145px;display:block}.chart-title{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}.chart-value{float:right;color:var(--accent)}
   ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#2b323a;border-radius:4px}
-  @media(max-width:980px){#ops{height:auto;max-height:60vh}.grid{grid-template-columns:1fr}.charts{grid-template-columns:1fr}}
+  @media(max-width:1080px){.grid{grid-template-columns:1fr}.charts{grid-template-columns:1fr}}
+  /* Mobile: the whole page scrolls. Nothing pins the stats or the queue in
+     place, and neither of them grows vertically. */
+  @media(max-width:700px){
+    html,body{height:auto;min-height:100%}
+    body{overflow:auto;display:block}
+    #topbar{padding:8px 10px;gap:10px}
+    #offline{order:3}
+    .stats{flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .stats::-webkit-scrollbar{display:none}
+    #queue-strip{padding:8px 10px}
+    #ops-tabs{padding:6px 8px 2px}
+    #ops-actions{margin-left:0;width:100%;padding:3px 0 6px;justify-content:flex-start}
+    #last-event{display:none}
+    #ops{flex:none;height:auto;min-height:0}
+    .ops-body{overflow:visible;padding:8px}
+    #ops-actions{margin-left:0;width:100%;padding-top:2px}
+    .panel{overflow-x:auto}
+    #log-box{height:auto;max-height:65vh}
+    .chart{height:170px}
+  }
 </style>
 </head>
 <body>
 <header id="topbar">
   <div id="brand">GLAISS <small>llpc waitroom console</small></div>
+  <div id="offline"><span class="dot"></span><span id="offline-text">disconnected</span></div>
   <div class="stats">
-    <div class="stat"><div class="label"><span id="ws-dot"></span>live</div><div class="value v-accent" id="stat-live">console</div></div>
-    <div class="stat"><div class="label"><span id="monitor-dot"></span>monitor</div><div class="value" id="stat-monitor">—</div></div>
-    <div class="stat"><div class="label">door</div><div class="value" id="stat-door">—</div></div>
     <div class="stat"><div class="label">loaded model</div><div class="value v-blue" id="stat-loaded">—</div></div>
-    <div class="stat"><div class="label">arbiter</div><div class="value" id="stat-active">—</div></div>
+    <div class="stat"><div class="label">generating</div><div class="value v-accent" id="stat-busy">idle</div></div>
     <div class="stat"><div class="label">hold</div><div class="value" id="stat-hold">—</div></div>
     <div class="stat"><div class="label">waiting</div><div class="value" id="stat-wait">0</div></div>
     <div class="stat"><div class="label">prefill</div><div class="value v-blue" id="stat-pp">—</div></div>
@@ -64,7 +102,12 @@
   </div>
 </header>
 
-<section id="queue-strip"><div class="qs-title">waitroom queue</div><div class="qboxes" id="queue-boxes"></div><span id="last-event"></span></section>
+<section id="queue-strip">
+  <div class="qs-title" id="queue-title">waitroom queue</div>
+  <div class="qboxes" id="queue-boxes"></div>
+  <span id="queue-hint">nothing generating or queued</span>
+  <span id="last-event"></span>
+</section>
 
 <main id="ops">
   <div id="ops-tabs">
@@ -72,7 +115,13 @@
     <button class="tab" data-tab="services">Services <span class="tab-count" id="service-count"></span></button>
     <button class="tab" data-tab="logs">Logs</button>
     <button class="tab" data-tab="metrics">Metrics</button>
-    <div id="ops-actions"><span class="jobline" id="job-status">idle</span><button class="ghost" id="resume-auto">Resume auto</button><button class="ghost danger" id="unlock-btn">Unlock</button></div>
+    <div id="ops-actions">
+      <span id="job-badge"></span>
+      <span class="chip" id="chip-mode"><span class="dot"></span><span id="chip-mode-text">…</span></span>
+      <button class="ghost" id="resume-auto">Resume auto</button>
+      <span class="chip" id="chip-lock"><span class="dot"></span><span id="chip-lock-text">…</span></span>
+      <button class="ghost danger" id="unlock-btn">Unlock</button>
+    </div>
   </div>
   <div class="ops-body">
     <div class="tabpane active" id="pane-models">
@@ -80,12 +129,12 @@
         <section class="panel">
           <h3>Current slot</h3>
           <div class="kv" id="current-slot"></div>
-          <div class="wrq"><h3>Waitroom queue</h3><div class="lane" id="waitroom-lane"></div></div>
         </section>
         <section class="panel">
           <h3>Model catalog</h3>
+          <div class="banner" id="ondemand-warn"></div>
           <div class="toolbar"><button class="ghost" id="refresh-state">Refresh</button><span class="small" id="registry-status"></span></div>
-          <table><thead><tr><th>Model</th><th>Engine</th><th>State</th><th>Actions</th></tr></thead><tbody id="models-body"></tbody></table>
+          <table><thead><tr><th>Model</th><th>Engine</th><th>State</th><th title="On = the waitroom may load this model by itself when a request asks for it. Off = a request naming it waits in the queue until you turn it back on or load it by hand.">On demand</th><th>Actions</th></tr></thead><tbody id="models-body"></tbody></table>
         </section>
       </div>
     </div>
@@ -111,36 +160,81 @@ const $ = x => document.getElementById(String(x).replace(/^#/, ''));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (x,suf='') => x==null ? '—' : (Number.isFinite(+x) ? Math.round(+x*10)/10 : x)+suf;
 const bytes = x => { if(x==null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let n=+x,i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return Math.round(n*10)/10+' '+u[i]; };
-const state = {data:null, history:{samples:[]}, jobs:[], activeTab:'models', logTimer:null, jobTimer:null};
 
-function setStatus(sel, ok, text) { const d=$(sel); if(!d) return; d.classList.toggle('dot-ok', !!ok); d.title=text||''; }
+// A request stays on screen for this long after its model stops generating.
+const DONE_SHOW_S = 5;
+const state = {data:null, history:{samples:[]}, jobs:[], activeTab:'models', logTimer:null,
+               wsOpen:false, doorOk:true, serving:null, done:[], modelsSig:null};
 
-// The queue is the DOOR's arbiter (llpc/waitroom.py on :8080): the console is not
-// in the request path and deliberately shows no per-request prompt/response view.
-function renderQueue(m) {
-  const boxes=[];
-  if (m) {
-    if (m.active) { const b=document.createElement('div'); b.className='qbox running';
-      b.innerHTML=`<div class="a"><b>${esc(m.active)}</b><span class="small">waitroom · serving</span></div><div class="m"><span>inflight <b>${m.inflight??0}</b></span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`; boxes.push(b); }
-    (m.waiting||[]).forEach(w => { const b=document.createElement('div'); b.className='qbox queued';
-      b.innerHTML=`<div class="a"><b>${esc(w.model)}</b><span class="small">waitroom · waiting</span></div><div class="m"><span>waited <b>${fmt(w.waited_s,'s')}</b></span></div>`; boxes.push(b); });
-    if (m.hold_remaining_s > 0) { const b=document.createElement('div'); b.className='qbox queued';
-      b.innerHTML=`<div class="a"><b>hysteresis hold</b><span class="small">waitroom · parking new model</span></div><div class="m"><span>left <b>${fmt(m.hold_remaining_s,'s')}</b></span></div>`; boxes.push(b); }
-    if (!m.active && !(m.waiting||[]).length && !(m.hold_remaining_s > 0)) { const b=document.createElement('div'); b.className='qbox queued';
-      b.innerHTML=`<div class="a"><b>${esc(m.current_loaded_model||m.loaded_model||'door idle')}</b><span class="small">waitroom · nothing queued</span></div>`; boxes.push(b); }
-  }
-  $('queue-boxes').innerHTML=''; boxes.forEach(x=>$('queue-boxes').appendChild(x));
+$('queue-title').title = 'The waitroom door owns this queue; GlAIss only reads it. '
+  + 'Shown: what is generating now, what is waiting, and what finished in the last '
+  + DONE_SHOW_S + 's. A model you switched off under Models · On demand parks its '
+  + 'requests here instead of loading.';
+
+// --- queue: generating / queued / just finished, and nothing else ------------
+function noteFinished(model) {
+  if (!model) return;
+  state.done = state.done.filter(x => x.model !== model);
+  state.done.push({model, at: Date.now()/1000});
 }
 
+function activityBoxes(m) {
+  const now = Date.now()/1000;
+  state.done = state.done.filter(x => now - x.at < DONE_SHOW_S);
+  const boxes = [];
+  if (m && m.active && m.inflight > 0) {
+    const b = document.createElement('div'); b.className='qbox running';
+    b.innerHTML=`<div class="a"><b>${esc(m.active)}</b><span class="small">generating</span></div>`
+      +`<div class="m"><span>in flight <b>${m.inflight}</b></span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`;
+    boxes.push(b);
+  }
+  (m?.waiting||[]).forEach(w => {
+    const b = document.createElement('div');
+    b.className = 'qbox ' + (w.blocked ? 'blocked' : 'queued');
+    b.innerHTML = `<div class="a"><b>${esc(w.model)}</b><span class="small">${w.blocked?'off demand':'waiting'}</span></div>`
+      + `<div class="m"><span>waited <b>${fmt(w.waited_s,'s')}</b></span>${w.blocked?`<span title="You switched this model off under Models · On demand. Its request will wait here until you switch it back on or load the model by hand.">won't load</span>`:''}</div>`;
+    boxes.push(b);
+  });
+  state.done.forEach(x => {
+    if (m && m.active && m.inflight > 0 && m.active === x.model) return;
+    const b = document.createElement('div'); b.className='qbox done';
+    b.innerHTML = `<div class="a"><b>${esc(x.model)}</b><span class="small">done</span></div>`
+      + `<div class="m"><span>${Math.max(0, Math.round(now-x.at))}s ago</span></div>`;
+    boxes.push(b);
+  });
+  return boxes;
+}
+
+function renderQueue(m) {
+  // Remember the moment the model in flight stops, so it can show as finished.
+  const serving = (m && m.inflight > 0) ? m.active : null;
+  if (state.serving && state.serving !== serving) noteFinished(state.serving);
+  state.serving = serving;
+  const boxes = activityBoxes(m);
+  const host = $('queue-boxes');
+  host.innerHTML=''; boxes.forEach(x=>host.appendChild(x));
+  $('queue-hint').style.display = boxes.length ? 'none' : '';
+}
+setInterval(() => { if (state.data) renderQueue(state.data.model || {}); }, 1000);
+
 function badge(x,cls,text){ return `<span class="badge ${cls}">${esc(text??x)}</span>`; }
+
+function updateOffline() {
+  const el = $('offline');
+  const problems = [];
+  if (!state.wsOpen) problems.push('console channel down — reconnecting');
+  if (!state.doorOk) problems.push('waitroom door unreachable');
+  if (!problems.length) { el.classList.remove('show'); return; }
+  $('offline-text').textContent = problems.join(' · ');
+  el.classList.add('show');
+}
+
 function renderMonitor(d) {
-  state.data=d; const s=d.system||{}, m=d.model||{}, cfg=d.config||{};
-  setStatus('#monitor-dot',(d.collectors||{}).waitroom?.ok,JSON.stringify(d.collectors||{}));
-  $('stat-monitor').textContent = d.collectors?.waitroom?.ok ? 'connected' : 'degraded';
-  $('stat-monitor').className='value '+(d.collectors?.waitroom?.ok?'v-accent':'v-err');
-  $('stat-door').textContent = cfg.waitroom_url ? String(cfg.waitroom_url).replace(/^https?:\/\//,'') : '—';
-  $('stat-door').title = `every client request goes to this door; GlAIss proxies nothing`;
-  $('stat-loaded').textContent=m.current_loaded_model||m.loaded_model||'none'; $('stat-active').textContent=m.active||'idle';
+  state.data=d; const s=d.system||{}, m=d.model||{}, col=d.collectors||{};
+  state.doorOk = !!col.waitroom?.ok;
+  $('stat-loaded').textContent=m.current_loaded_model||m.loaded_model||'none';
+  $('stat-busy').textContent=(m.inflight>0 && m.active) ? `${m.inflight} · ${m.active}` : 'idle';
+  $('stat-busy').className='value '+(m.inflight>0?'v-accent':'');
   $('stat-hold').textContent=fmt(m.hold_remaining_s,'s'); $('stat-wait').textContent=(m.waiting||[]).length;
   $('stat-pp').textContent=fmt(s.prefill_tps,' t/s'); $('stat-decode').textContent=fmt(s.decode_tps,' t/s');
   const tpsNote=`source: ${s.token_speed_source||'—'} · engine: ${s.engine_phase||'idle'} · KV reuse: ${s.engine_cache_hit_rate!=null?Math.round(s.engine_cache_hit_rate*100)+'%':'—'}`;
@@ -148,42 +242,104 @@ function renderMonitor(d) {
   $('stat-reqs').textContent = s.engine_requests ?? '—';
   $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W'); $('stat-ram').textContent=bytes(s.ram_used_bytes); $('stat-vram').textContent=bytes((s.vram_used_mib||0)*1048576);
   renderQueue(m);
-  renderCurrent(d); renderModels(d); renderServices(d.services||[]); renderJobs((d.control||{}).jobs||[]); renderCharts();
+  renderCurrent(d); renderModels(d); renderServices(d.services||[]); renderJobs((d.control||{}).jobs||[]); updateOffline(); renderCharts();
 }
+
 function renderCurrent(d) {
   const m=d.model||{}, lock=m.lock, manual=m.manual_control, jobs=(d.control||{}).jobs||[], busy=jobs.some(x=>['queued','running'].includes(x.status));
-  const mode=lock?'locked':manual?.mode==='manual'?'manual':'auto'; $('current-slot').innerHTML=`
+  const mode=lock?'locked':manual?.mode==='manual'?'manual':'auto';
+  $('current-slot').innerHTML=`
     <div>Loaded</div><div>${badge(m.current_loaded_model?'loaded':'inactive',m.current_loaded_model?'loaded':'',m.current_loaded_model||'none')} ${esc(m.loaded_state||'')}</div>
     <div>Mode</div><div>${badge(mode,lock?'locked':'loaded',mode)}${lock?` <span class="small">${esc(lock.model)}</span>`:''}</div>
     <div>Hysteresis</div><div>${fmt(m.hold_remaining_s,'s')} / ${fmt(m.swap_hold_s,'s')}</div>
-    <div>Quantum</div><div>${fmt(m.quantum_left_s,'s')} left · ${m.inflight??0} in flight · ${m.handoffs??0} handoffs</div>
+    <div>Slot</div><div>${fmt(m.quantum_left_s,'s')} quantum left · ${m.inflight??0} in flight · ${m.handoffs??0} handoffs</div>
     <div>Comfy claim</div><div>${m.comfy_claimed?badge('claimed','locked',`claimed (${esc(m.desired_unit||'')})`):'not claimed'}</div>
-    <div>Control job</div><div>${busy?badge('running','loaded',jobs.find(x=>['queued','running'].includes(x.status)).action+' · '+esc(jobs.find(x=>['queued','running'].includes(x.status)).model)):'idle'}</div>`;
-  const lane=$('waitroom-lane'); const waiting=m.waiting||[];
-  lane.innerHTML=`<div class="lanebox active"><small>ACTIVE</small><b>${esc(m.active||'idle')}</b><br><span class="small">${m.inflight??0} in flight</span></div>${waiting.map((w,i)=>`<div class="lanebox"><small>#${i+1}</small><b>${esc(w.model)}</b><br><span class="small">waited ${fmt(w.waited_s,'s')}</span></div>`).join('')||'<div class="lanebox"><small>WAITING</small>none</div>'}`;
-  $('unlock-btn').disabled=!lock||busy; $('resume-auto').disabled=busy;
+    <div>Off demand</div><div>${(m.on_demand_disabled||[]).length?esc((m.on_demand_disabled||[]).join(', ')):'none — every model may load'}</div>`;
+  // The two switches: state first (chip), action second (button). A button you
+  // cannot press is disabled and says why in its tooltip.
+  const manualOn = manual?.mode==='manual' || !!lock;
+  const cm=$('chip-mode'), cmText=$('chip-mode-text');
+  cm.className='chip '+(manualOn?'hold':'on');
+  cmText.textContent = manualOn ? 'MANUAL' : 'AUTO';
+  cm.title = manualOn
+    ? `Automatic residency is standing down${manual?.suppress_backstops_until?` until ${new Date(manual.suppress_backstops_until*1000).toLocaleTimeString()}`:''}. Backstops (keep-warm, slot watchdog) will not swap models on their own.`
+    : 'Automatic residency is active: the waitroom and its backstops choose which model stays loaded.';
+  const ra=$('resume-auto');
+  ra.disabled = !manualOn || busy;
+  ra.title = busy ? 'a control job is running' : (manualOn ? 'Hand control back: clear the lock and let automatic residency run again' : 'already automatic — nothing to resume');
+  const cl=$('chip-lock'), clText=$('chip-lock-text');
+  cl.className='chip '+(lock?'hold':'');
+  clText.textContent = lock ? `LOCKED · ${lock.model}` : 'NO LOCK';
+  cl.title = lock ? `Only ${lock.model} may hold the slot${lock.locked_by?` (locked by ${lock.locked_by})`:''}. Requests for other models are rejected until you unlock.`
+                  : 'No model is locked: any enabled model can take the slot.';
+  const ub=$('unlock-btn');
+  ub.disabled = !lock || busy;
+  ub.title = busy ? 'a control job is running' : (lock ? `Release the lock on ${lock.model}` : 'nothing is locked');
 }
+
 function modelActions(x){ const locked=x.locked, busy=state.jobs.some(y=>['queued','running'].includes(y.status)); const dis=x.unlisted?'disabled':'';
  return `<div class="btns"><button class="mini" ${dis} onclick='loadModel(${JSON.stringify(x.name)},false)'>Load</button>
   <button class="mini warn" ${dis} onclick='loadModel(${JSON.stringify(x.name)},true)'>Load + lock</button>
-  <button class="mini warn" ${dis} onclick='lockModel(${JSON.stringify(x.name)})'>Lock</button>
   <button class="mini" ${locked?'disabled':''} onclick='unloadModel(${JSON.stringify(x.name)})'>Unload</button></div>`;
 }
-function renderModels(d){ const rows=d.models||[]; $('model-count').textContent=rows.length; $('registry-status').textContent=d.collectors?.registry?.error||`${rows.length} models · ${d.collectors?.gpu?.ok?'GPUs ok':'GPU collector degraded'}`;
- $('models-body').innerHTML=rows.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.unlisted?' <span class="small">unlisted</span>':''}<div class="small">${(x.aliases||[]).slice(0,3).map(esc).join(' · ')}</div></td><td>${esc(x.unit||'?')}<div class="small">:${x.port||'?'} · ${x.text===false?'media':'text'}</div></td><td>${x.loaded?badge('loaded','loaded'):''} ${x.locked?badge('locked','locked'):badge('idle','')}<div class="small">${esc(x.current_version||'')}</div></td><td>${modelActions(x)}</td></tr>`).join('')||'<tr><td colspan=4>No registry models found.</td></tr>';
+
+function renderModels(d){
+  const rows=d.models||[]; const dis=d.model?.on_demand_disabled||[];
+  $('model-count').textContent=rows.length;
+  $('registry-status').textContent=d.collectors?.registry?.error||`${rows.length} models · ${dis.length?`${dis.length} off demand`:''} · ${d.collectors?.gpu?.ok?'GPUs ok':'GPU collector degraded'}`;
+  const enabledCount=rows.filter(x=>x.on_demand!==false).length;
+  const warn=$('ondemand-warn');
+  if (rows.length && enabledCount===0) { warn.textContent='Every model is switched off: new requests will queue and time out. Turn at least one back on.'; warn.classList.add('show'); }
+  else if (rows.length && rows.some(x=>x.loaded && x.on_demand===false)) { warn.textContent='The loaded model is switched off for on-demand loading — it keeps serving what is already running, but a new request naming it will wait.'; warn.classList.add('show'); }
+  else warn.classList.remove('show');
+  // The poll repaints every 2 s. Rebuilding the table anyway would replace the
+  // checkbox a click is landing on (and flash a stale value after a toggle), so
+  // only re-render when something in it actually changed.
+  const sig=JSON.stringify([rows.map(x=>[x.name,x.loaded,!!x.locked,x.on_demand!==false,!!x.unlisted,x.unit,x.port,x.current_version]),warn.classList.contains('show')]);
+  if (sig===state.modelsSig) return;
+  state.modelsSig=sig;
+  $('models-body').innerHTML=rows.map(x=>{
+    const on = x.on_demand!==false;
+    return `<tr><td><b>${esc(x.name)}</b>${x.unlisted?' <span class="small">unlisted</span>':''}<div class="small">${(x.aliases||[]).slice(0,3).map(esc).join(' · ')}</div></td>`
+     +`<td>${esc(x.unit||'?')}<div class="small">:${x.port||'?'} · ${x.text===false?'media':'text'}</div></td>`
+     +`<td>${x.loaded?badge('loaded','loaded'):''} ${x.locked?badge('locked','locked'):''}${x.loaded||x.locked?' ':''}${on?badge('idle',''):'<span class="badge locked">parked</span>'}<div class="small">${esc(x.current_version||'')}</div></td>`
+     +`<td class="oncol"><input type="checkbox" ${on?'checked':''} aria-label="Load ${esc(x.name)} on demand" onchange='setOnDemand(${JSON.stringify(x.name)},this.checked)'></td>`
+     +`<td>${modelActions(x)}</td></tr>`;
+  }).join('')||'<tr><td colspan=5>No registry models found.</td></tr>';
 }
+
 function renderServices(rows){ $('service-count').textContent=rows.length; $('services-body').innerHTML=rows.map(r=>{ const logs=r.logs||{}, err=logs.error||0, warn=logs.warn||0; return `<tr><td><b>${esc(r.display)}</b><div class="small">${esc(r.display_label||r.unit||'synthetic process')}</div></td><td>${badge(r.state, ['active','process-active'].includes(r.state)?'loaded':(r.state==='inactive'?'':'error'))}<div class="small">${esc(r.sub_state||'')} · ${r.restarts??0} restarts</div></td><td class="num">${r.main_pid||'—'}</td><td class="num">${fmt(r.cpu_percent,'%')}</td><td class="num">${fmt(r.rss_mib,' MiB')}</td><td class="num">${fmt(r.vram_mib,' MiB')}</td><td class="num ${err?'v-err':warn?'v-warn':''}">${err}/${warn}</td><td class="small" title="${esc((logs.last||{}).text||'')}">${esc(((logs.last||{}).text||'—').slice(0,100))}</td></tr>`}).join('');
   const sel=$('log-unit'); if(!sel.options.length||sel.options.length===1){ rows.forEach(r=>{const o=document.createElement('option');o.value=r.display;o.textContent=r.display;sel.appendChild(o)}); ['model-waitroom','llama-server'].forEach(u=>{if(!rows.some(r=>r.display===u)){const o=document.createElement('option');o.value=u;o.textContent=u;sel.appendChild(o)}}); }
 }
-function renderJobs(jobs){ state.jobs=jobs||[]; const running=jobs.find(x=>['queued','running'].includes(x.status)); $('job-status').textContent=running?`${running.action} ${running.model||''} · ${running.status}`:(jobs[0]?`last: ${jobs[0].action} ${jobs[0].model||''} · ${jobs[0].status}`:'idle'); $('job-status').className='jobline '+((jobs[0]||{}).status==='failed'?'v-err':running?'v-warn':'');
-  document.querySelectorAll('.mini').forEach(x=>x.disabled=!!running); $('unlock-btn').disabled=!state.data?.model?.lock||!!running; $('resume-auto').disabled=!!running;
+
+function renderJobs(jobs){
+  state.jobs=jobs||[];
+  const running=jobs.find(x=>['queued','running'].includes(x.status));
+  const badgeEl=$('job-badge');
+  if (running) { badgeEl.textContent=`${running.action} ${running.model||''} · ${running.status}`; badgeEl.classList.add('show'); }
+  else badgeEl.classList.remove('show');
+  document.querySelectorAll('.mini').forEach(x=>x.disabled=!!running);
+  if (state.data) renderCurrent(state.data);
 }
+
 async function post(path,body){ const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d?.error?.message||d?.detail||r.statusText); renderJobs(d.job?[d.job]:state.jobs); setTimeout(poll,300); return d; }
 // Every model move goes through swap-to.sh on the server (/api/control/*), which
 // is the same path the CLI uses; the console never starts or stops a unit itself.
 window.loadModel=async (name,lock)=>{ if(!confirm(lock?`Load and LOCK ${name}? The waitroom will reject other models until unlocked.`:`Load ${name}? This may swap the currently loaded model.`))return; try{await post('/api/control/load',{model:name,lock_after_load:lock})}catch(e){alert(e.message)} };
 window.unloadModel=async name=>{ if(!confirm(`Unload ${name}? This stops the serving unit unless a backstop re-adopts it.`))return; try{await post('/api/control/unload',{model:name})}catch(e){ if(!confirm(e.message+' Retry as a force/break-lock emergency action?'))return; try{await post('/api/control/unload',{model:name,force:true,break_lock:true})}catch(e2){alert(e2.message)} } };
-window.lockModel=async name=>{ if(!confirm(`Lock ${name}? Requests for other models will be rejected.`))return; try{await post('/api/control/lock',{model:name,load_if_needed:true})}catch(e){alert(e.message)} };
+// On-demand is a routing switch in the door, not a load/unload action: it never
+// touches a running unit, it decides whether a request may cause a load.
+window.setOnDemand=async (name,enabled)=>{
+  const apply=(on)=>{ state.modelsSig=null;                 // force the row to repaint
+    (state.data?.models||[]).forEach(r=>{ if (r.name===name) r.on_demand=on; });
+    if (state.data) renderMonitor(state.data); };
+  apply(!enabled);                                          // optimistic
+  try {
+    const d=await post('/api/control/on_demand',{model:name,enabled});
+    if (state.data?.model) state.data.model.on_demand_disabled=d.on_demand_disabled||[];
+    apply(enabled);
+  } catch(e){ apply(!enabled); alert(e.message); }
+};
 $('unlock-btn').onclick=async()=>{if(confirm('Unlock the manual model lock?'))await post('/api/control/unlock').catch(e=>alert(e.message))};
 $('resume-auto').onclick=async()=>{if(confirm('Resume automatic residency and clear the manual-control suppression?'))await post('/api/control/resume_auto').catch(e=>alert(e.message))};
 $('refresh-state').onclick=poll;
@@ -193,7 +349,7 @@ function drawChart(id,key,color,scaleTotal){ const c=$(id), dpr=devicePixelRatio
 function renderCharts(){ if(state.activeTab!=='metrics')return; const x=state.history.samples||[], last=x[x.length-1]||{}; $('power-now').textContent=fmt(last.system_power_w,' W'); $('tps-now').textContent=`dec ${fmt(last.decode_tps)} · pp ${fmt(last.prefill_tps)}`; $('ram-now').textContent=bytes(last.ram_used_bytes); $('vram-now').textContent=`${fmt(last.vram_used_mib,' MiB')}`;
   drawChart('power-chart','system_power_w','#e0ad43'); drawChart('tps-chart','decode_tps','#42d3a3'); drawChart('ram-chart','ram_used_bytes','#5aa9e6',last.ram_total_bytes); drawChart('vram-chart','vram_used_mib','#c07de6',last.vram_total_mib);
 }
-async function poll(){ try{const d=await(await fetch('/api/state')).json(); renderMonitor(d); const h=await(await fetch('/api/history?seconds=900')).json(); state.history=h; renderCharts();}catch(e){setStatus('#monitor-dot',false,e.message); $('stat-monitor').textContent='down';} }
+async function poll(){ try{const d=await(await fetch('/api/state')).json(); renderMonitor(d); const h=await(await fetch('/api/history?seconds=900')).json(); state.history=h; renderCharts();}catch(e){state.doorOk=false; updateOffline();} }
 
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.tabpane').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.activeTab=b.dataset.tab;$('pane-'+state.activeTab).classList.add('active'); if(state.activeTab==='metrics')renderCharts(); if(state.activeTab==='logs')pollLogs();});
 $('log-unit').onchange=pollLogs; $('log-level').onchange=pollLogs; $('log-follow').onchange=()=>state.logTimer&&clearInterval(state.logTimer);
@@ -204,8 +360,8 @@ setInterval(poll,2000); setInterval(followLogs,3000);
 // Console channel: monitor snapshots, control jobs and door events pushed by the
 // server. Nothing request-level ever crosses here — the door owns the traffic.
 function connectWS(){ const p=location.protocol==='https:'?'wss':'ws'; const ws=new WebSocket(`${p}://${location.host}/ws`);
-  ws.onopen=()=>{ setStatus('#ws-dot',true,'console websocket connected'); $('stat-live').textContent='live'; };
-  ws.onclose=()=>{ setStatus('#ws-dot',false,'reconnecting'); $('stat-live').textContent='reconnecting'; setTimeout(connectWS,1500); };
+  ws.onopen=()=>{ state.wsOpen=true; updateOffline(); };
+  ws.onclose=()=>{ state.wsOpen=false; updateOffline(); setTimeout(connectWS,1500); };
   ws.onmessage=e=>{ const m=JSON.parse(e.data);
     if(m.type==='monitor'){ if(state.data) renderMonitor(Object.assign({},state.data,m)); }
     else if(m.type==='control_job'){ renderJobs([m.job,...state.jobs.filter(x=>x.id!==m.job.id)]); poll(); }
