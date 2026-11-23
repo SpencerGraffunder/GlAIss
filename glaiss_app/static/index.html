@@ -195,20 +195,15 @@ function activityBoxes(m) {
   state.done = state.done.filter(x => now - x.at < DONE_SHOW_S);
   const boxes = [];
   if (m && m.active && m.inflight > 0) {
-    const reqs = Array.isArray(m.inflight_requests) ? m.inflight_requests : [];
-    if (reqs.length) {
-      reqs.forEach((r, i) => {
-        const b = document.createElement('div'); b.className='qbox running';
-        b.innerHTML=`<div class="a"><b>${esc(r.model || m.active)}</b><span class="small">generating</span></div>`
-          +`<div class="m"><span>request <b>${i+1}</b>${r.req_id!=null?` · id ${esc(r.req_id)}`:''}</span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`;
-        boxes.push(b);
-      });
-    } else {
+    const reqs = Array.isArray(m.inflight_requests) && m.inflight_requests.length
+      ? m.inflight_requests
+      : Array.from({length: m.inflight || 0}, () => ({model: m.active, req_id: null}));
+    reqs.forEach((r, i) => {
       const b = document.createElement('div'); b.className='qbox running';
-      b.innerHTML=`<div class="a"><b>${esc(m.active)}</b><span class="small">generating</span></div>`
-        +`<div class="m"><span>in flight <b>${m.inflight}</b></span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`;
+      b.innerHTML=`<div class="a"><b>${esc(r.model || m.active)}</b><span class="small">generating</span></div>`
+        +`<div class="m"><span>request <b>${i+1}</b>${r.req_id!=null?` · id ${esc(r.req_id)}`:''}</span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`;
       boxes.push(b);
-    }
+    });
   }
   (m?.waiting||[]).forEach(w => {
     const b = document.createElement('div');
