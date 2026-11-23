@@ -557,6 +557,26 @@ async def t_queue_affinity_same_model_runs_together():
         ck(arb.inflight == 0, "queue: both released")
 
 
+async def t_queue_deepseek_one_inflight():
+    async with Harness(running=[DS], quantum=30.0, wait_s=10.0) as h:
+        h.st.gate_delay = 0.4
+        arb = h.client.server.app["arb"]
+        t1 = asyncio.create_task(h.post_chat(DS))
+        await asyncio.sleep(0.05)
+        t2 = asyncio.create_task(h.post_chat(DS_ALIAS))
+        await asyncio.sleep(0.15)
+        ck(arb.inflight == 1,
+           "deepseek: only one request is in flight at a time")
+        snap = arb.snapshot()
+        ck(len(snap["inflight_requests"]) == 1
+           and snap["inflight_requests"][0]["model"] == DS,
+           "deepseek: one in-flight request is listed")
+        ck(len(snap["waiting"]) == 1 and snap["waiting"][0]["model"] == DS,
+           "deepseek: the second request waits as its own queue entry")
+        await asyncio.gather(t1, t2)
+        ck(arb.inflight == 0, "deepseek: both released")
+
+
 async def t_queue_releases_after_upstream_error():
     async with Harness(running=[FLASH]) as h:
         h.st.gate_chat_status = 500
@@ -572,8 +592,9 @@ async def t_queue_endpoint_reports_state():
             d = await r.json()
         ck(r.status == 200 and d.get("loaded") == FLASH,
            "queue: /queue reports the loaded model")
-        ck("waiting" in d and "active" in d and "inflight" in d,
-           "queue: /queue exposes wait list and in-flight count")
+        ck("waiting" in d and "active" in d and "inflight" in d
+           and "inflight_requests" in d,
+           "queue: /queue exposes wait list, in-flight count, and per-request list")
 
 
 async def t_failopen_uses_model_port():

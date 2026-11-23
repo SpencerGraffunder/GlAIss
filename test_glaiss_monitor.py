@@ -240,3 +240,15 @@ def test_parse_engine_metrics_strata_schema_and_live_priority():
     assert out["prefill_tps"] == 5000.0
     assert out["decode_tps"] == 42.0, "live tok_s wins over the completed request"
     assert out["cache_hit_rate"] == 0.5
+
+
+def test_history_last_non_null_keeps_the_last_prefill():
+    """The tile keeps the most recent engine value instead of blanking on a gap."""
+    h = monitor.History()
+    h.add({"system": {"prefill_tps": 199.1, "decode_tps": 16.0},
+           "model": {"current_loaded_model": "DeepSeek V4.1 Flash"}})
+    h.add({"system": {"prefill_tps": None, "decode_tps": None},
+           "model": {"current_loaded_model": "DeepSeek V4.1 Flash"}})
+    assert h.last_non_null("prefill_tps", "DeepSeek V4.1 Flash") == 199.1
+    assert h.last_non_null("decode_tps", "DeepSeek V4.1 Flash") == 16.0
+    assert h.last_non_null("prefill_tps", "Qwen 3.8 Flash Next Q4") is None

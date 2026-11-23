@@ -126,10 +126,6 @@
     <button class="tab" data-tab="metrics">Metrics</button>
     <div id="ops-actions">
       <span id="job-badge"></span>
-      <span class="chip" id="chip-mode"><span class="dot"></span><span id="chip-mode-text">…</span></span>
-      <button class="ghost" id="resume-auto">Resume auto</button>
-      <span class="chip" id="chip-lock"><span class="dot"></span><span id="chip-lock-text">…</span></span>
-      <button class="ghost danger" id="unlock-btn">Unlock</button>
     </div>
   </div>
   <div class="ops-body">
@@ -179,7 +175,8 @@ const bytes = x => { if(x==null) return '—'; const u=['B','KiB','MiB','GiB','T
 // A request stays on screen for this long after its model stops generating.
 const DONE_SHOW_S = 5;
 const state = {data:null, history:{samples:[]}, jobs:[], activeTab:'models', logTimer:null,
-               wsOpen:false, doorOk:true, serving:null, done:[], modelsSig:null};
+               wsOpen:false, doorOk:true, serving:null, done:[], modelsSig:null,
+               lastPrefill:null, lastDecode:null};
 
 $('queue-title').title = 'The waitroom door owns this queue; GlAIss only reads it. '
   + 'Shown: what is generating now, what is waiting, and what finished in the last '
@@ -198,10 +195,20 @@ function activityBoxes(m) {
   state.done = state.done.filter(x => now - x.at < DONE_SHOW_S);
   const boxes = [];
   if (m && m.active && m.inflight > 0) {
-    const b = document.createElement('div'); b.className='qbox running';
-    b.innerHTML=`<div class="a"><b>${esc(m.active)}</b><span class="small">generating</span></div>`
-      +`<div class="m"><span>in flight <b>${m.inflight}</b></span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`;
-    boxes.push(b);
+    const reqs = Array.isArray(m.inflight_requests) ? m.inflight_requests : [];
+    if (reqs.length) {
+      reqs.forEach((r, i) => {
+        const b = document.createElement('div'); b.className='qbox running';
+        b.innerHTML=`<div class="a"><b>${esc(r.model || m.active)}</b><span class="small">generating</span></div>`
+          +`<div class="m"><span>request <b>${i+1}</b>${r.req_id!=null?` · id ${esc(r.req_id)}`:''}</span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`;
+        boxes.push(b);
+      });
+    } else {
+      const b = document.createElement('div'); b.className='qbox running';
+      b.innerHTML=`<div class="a"><b>${esc(m.active)}</b><span class="small">generating</span></div>`
+        +`<div class="m"><span>in flight <b>${m.inflight}</b></span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`;
+      boxes.push(b);
+    }
   }
   (m?.waiting||[]).forEach(w => {
     const b = document.createElement('div');
@@ -244,6 +251,14 @@ function updateOffline() {
   el.classList.add('show');
 }
 
+function lastHistoryValue(key) {
+  const xs = state.history.samples || [];
+  for (let i = xs.length - 1; i >= 0; i--) {
+    if (xs[i][key] != null) return xs[i][key];
+  }
+  return null;
+}
+
 function renderMonitor(d) {
   state.data=d; const s=d.system||{}, m=d.model||{}, col=d.collectors||{};
   state.doorOk = !!col.waitroom?.ok;
@@ -251,7 +266,11 @@ function renderMonitor(d) {
   $('stat-busy').textContent=(m.inflight>0 && m.active) ? `${m.inflight} · ${m.active}` : 'idle';
   $('stat-busy').className='value '+(m.inflight>0?'v-accent':'');
   $('stat-hold').textContent=fmt(m.hold_remaining_s,'s'); $('stat-wait').textContent=(m.waiting||[]).length;
-  $('stat-pp').textContent=fmt(s.prefill_tps,' t/s'); $('stat-decode').textContent=fmt(s.decode_tps,' t/s');
+  const pp = s.prefill_tps != null ? s.prefill_tps : (lastHistoryValue('prefill_tps') ?? state.lastPrefill);
+  const dec = s.decode_tps != null ? s.decode_tps : (lastHistoryValue('decode_tps') ?? state.lastDecode);
+  if (s.prefill_tps != null) state.lastPrefill = s.prefill_tps;
+  if (s.decode_tps != null) state.lastDecode = s.decode_tps;
+  $('stat-pp').textContent=fmt(pp,' t/s'); $('stat-decode').textContent=fmt(dec,' t/s');
   const tpsNote=`source: ${s.token_speed_source||'—'} · engine: ${s.engine_phase||'idle'} · KV reuse: ${s.engine_cache_hit_rate!=null?Math.round(s.engine_cache_hit_rate*100)+'%':'—'}`;
   $('stat-pp').title=tpsNote; $('stat-decode').title=tpsNote;
   $('stat-reqs').textContent = s.engine_requests ?? '—';
@@ -262,41 +281,18 @@ function renderMonitor(d) {
 }
 
 function renderCurrent(d) {
-  const m=d.model||{}, lock=m.lock, manual=m.manual_control, jobs=(d.control||{}).jobs||[], busy=jobs.some(x=>['queued','running'].includes(x.status));
-  const mode=lock?'locked':manual?.mode==='manual'?'manual':'auto';
+  const m=d.model||{};
   $('current-slot').innerHTML=`
     <div>Loaded</div><div>${badge(m.current_loaded_model?'loaded':'inactive',m.current_loaded_model?'loaded':'',m.current_loaded_model||'none')} ${esc(m.loaded_state||'')}</div>
-    <div>Mode</div><div>${badge(mode,lock?'locked':'loaded',mode)}${lock?` <span class="small">${esc(lock.model)}</span>`:''}</div>
     <div>Hysteresis</div><div>${fmt(m.hold_remaining_s,'s')} / ${fmt(m.swap_hold_s,'s')}</div>
     <div>Slot</div><div>${fmt(m.quantum_left_s,'s')} quantum left · ${m.inflight??0} in flight · ${m.handoffs??0} handoffs</div>
     <div>Comfy claim</div><div>${m.comfy_claimed?badge('claimed','locked',`claimed (${esc(m.desired_unit||'')})`):'not claimed'}</div>
     <div>Off demand</div><div>${(m.on_demand_disabled||[]).length?esc((m.on_demand_disabled||[]).join(', ')):'none — every model may load'}</div>`;
-  // The two switches: state first (chip), action second (button). A button you
-  // cannot press is disabled and says why in its tooltip.
-  const manualOn = manual?.mode==='manual' || !!lock;
-  const cm=$('chip-mode'), cmText=$('chip-mode-text');
-  cm.className='chip '+(manualOn?'hold':'on');
-  cmText.textContent = manualOn ? 'MANUAL' : 'AUTO';
-  cm.title = manualOn
-    ? `Automatic residency is standing down${manual?.suppress_backstops_until?` until ${new Date(manual.suppress_backstops_until*1000).toLocaleTimeString()}`:''}. Backstops (keep-warm, slot watchdog) will not swap models on their own.`
-    : 'Automatic residency is active: the waitroom and its backstops choose which model stays loaded.';
-  const ra=$('resume-auto');
-  ra.disabled = !manualOn || busy;
-  ra.title = busy ? 'a control job is running' : (manualOn ? 'Hand control back: clear the lock and let automatic residency run again' : 'already automatic — nothing to resume');
-  const cl=$('chip-lock'), clText=$('chip-lock-text');
-  cl.className='chip '+(lock?'hold':'');
-  clText.textContent = lock ? `LOCKED · ${lock.model}` : 'NO LOCK';
-  cl.title = lock ? `Only ${lock.model} may hold the slot${lock.locked_by?` (locked by ${lock.locked_by})`:''}. Requests for other models are rejected until you unlock.`
-                  : 'No model is locked: any enabled model can take the slot.';
-  const ub=$('unlock-btn');
-  ub.disabled = !lock || busy;
-  ub.title = busy ? 'a control job is running' : (lock ? `Release the lock on ${lock.model}` : 'nothing is locked');
 }
 
-function modelActions(x){ const locked=x.locked, busy=state.jobs.some(y=>['queued','running'].includes(y.status)); const dis=x.unlisted?'disabled':'';
- return `<div class="btns"><button class="mini" ${dis} onclick='loadModel(${JSON.stringify(x.name)},false)'>Load</button>
-  <button class="mini warn" ${dis} onclick='loadModel(${JSON.stringify(x.name)},true)'>Load + lock</button>
-  <button class="mini" ${locked?'disabled':''} onclick='unloadModel(${JSON.stringify(x.name)})'>Unload</button></div>`;
+function modelActions(x){ const dis=x.unlisted?'disabled':'';
+ return `<div class="btns"><button class="mini" ${dis} onclick='loadModel(${JSON.stringify(x.name)})'>Load</button>
+  <button class="mini" onclick='unloadModel(${JSON.stringify(x.name)})'>Unload</button></div>`;
 }
 
 function renderModels(d){
@@ -318,7 +314,7 @@ function renderModels(d){
     const on = x.on_demand!==false;
     return `<tr><td><b>${esc(x.name)}</b>${x.unlisted?' <span class="small">unlisted</span>':''}<div class="small">${(x.aliases||[]).slice(0,3).map(esc).join(' · ')}</div></td>`
      +`<td>${esc(x.unit||'?')}<div class="small">:${x.port||'?'} · ${x.text===false?'media':'text'}</div></td>`
-     +`<td>${x.loaded?badge('loaded','loaded'):''} ${x.locked?badge('locked','locked'):''}${x.loaded||x.locked?' ':''}${on?badge('idle',''):'<span class="badge locked">parked</span>'}<div class="small">${esc(x.current_version||'')}</div></td>`
+     +`<td>${x.loaded?badge('loaded','loaded'):''}${x.loaded?' ':''}${on?badge('idle',''):'<span class="badge locked">parked</span>'}<div class="small">${esc(x.current_version||'')}</div></td>`
      +`<td class="oncol"><input type="checkbox" ${on?'checked':''} aria-label="Load ${esc(x.name)} on demand" onchange='setOnDemand(${JSON.stringify(x.name)},this.checked)'></td>`
      +`<td>${modelActions(x)}</td></tr>`;
   }).join('')||'<tr><td colspan=5>No registry models found.</td></tr>';
@@ -341,7 +337,7 @@ function renderJobs(jobs){
 async function post(path,body){ const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d?.error?.message||d?.detail||r.statusText); renderJobs(d.job?[d.job]:state.jobs); setTimeout(poll,300); return d; }
 // Every model move goes through swap-to.sh on the server (/api/control/*), which
 // is the same path the CLI uses; the console never starts or stops a unit itself.
-window.loadModel=async (name,lock)=>{ if(!confirm(lock?`Load and LOCK ${name}? The waitroom will reject other models until unlocked.`:`Load ${name}? This may swap the currently loaded model.`))return; try{await post('/api/control/load',{model:name,lock_after_load:lock})}catch(e){alert(e.message)} };
+window.loadModel=async name=>{ if(!confirm(`Load ${name}? This may swap the currently loaded model.`))return; try{await post('/api/control/load',{model:name})}catch(e){alert(e.message)} };
 window.unloadModel=async name=>{ if(!confirm(`Unload ${name}? This stops the serving unit unless a backstop re-adopts it.`))return; try{await post('/api/control/unload',{model:name})}catch(e){ if(!confirm(e.message+' Retry as a force/break-lock emergency action?'))return; try{await post('/api/control/unload',{model:name,force:true,break_lock:true})}catch(e2){alert(e2.message)} } };
 // On-demand is a routing switch in the door, not a load/unload action: it never
 // touches a running unit, it decides whether a request may cause a load.
@@ -356,8 +352,6 @@ window.setOnDemand=async (name,enabled)=>{
     apply(enabled);
   } catch(e){ apply(!enabled); alert(e.message); }
 };
-$('unlock-btn').onclick=async()=>{if(confirm('Unlock the manual model lock?'))await post('/api/control/unlock').catch(e=>alert(e.message))};
-$('resume-auto').onclick=async()=>{if(confirm('Resume automatic residency and clear the manual-control suppression?'))await post('/api/control/resume_auto').catch(e=>alert(e.message))};
 $('refresh-state').onclick=poll;
 
 async function pollLogs(){ const q=new URLSearchParams({limit:500}); if($('log-unit').value)q.set('unit',$('log-unit').value); if($('log-level').value)q.set('level',$('log-level').value); try{const d=await(await fetch('/api/logs?'+q)).json(); $('log-status').textContent=d.status?.running?`journal follow active · ${d.logs.length} shown`:'journal collector not running'; $('log-box').innerHTML=d.logs.map(x=>`<div class="log ${x.severity}"><span class="time">${new Date(x.ts*1000).toLocaleTimeString()}</span><span class="unit">${esc((x.unit||[]).join(','))}</span>${esc(x.text)}</div>`).join(''); }catch(e){$('log-status').textContent='logs unavailable';} }
@@ -412,8 +406,52 @@ function renderStt(d){
   el.innerHTML=row('server',s.server||{})+row('shim',s.shim||{})+`<div class="small">${esc(s.model||'')} — ${esc(s.note||'')}</div>`;
 }
 
-function renderCharts(){ if(state.activeTab!=='metrics')return; const x=state.history.samples||[], last=x[x.length-1]||{}; $('power-now').textContent=fmt(last.system_power_w,' W'); $('tps-now').textContent=`dec ${fmt(last.decode_tps)} · pp ${fmt(last.prefill_tps)}`; $('ram-now').textContent=bytes(last.ram_used_bytes); $('vram-now').textContent=`${fmt(last.vram_used_mib,' MiB')}`;
-  drawChart('power-chart','system_power_w','#e0ad43'); drawChart('tps-chart','decode_tps','#42d3a3'); drawChart('ram-chart','ram_used_bytes','#5aa9e6',last.ram_total_bytes); drawChart('vram-chart','vram_used_mib','#c07de6',last.vram_total_mib);
+function drawTokenChart(){
+  const c=$('tps-chart'), dpr=devicePixelRatio||1;
+  c.width=c.clientWidth*dpr; c.height=c.clientHeight*dpr;
+  const g=c.getContext('2d'); g.scale(dpr,dpr);
+  const w=c.clientWidth, h=c.clientHeight;
+  g.clearRect(0,0,w,h);
+  const xs=state.history.samples||[];
+  if(!xs.length) return;
+  const dec=[], pp=[];
+  let dl=null, pl=null;
+  xs.forEach(x=>{
+    if(x.decode_tps!=null) dl=x.decode_tps;
+    dec.push(dl);
+    if(x.prefill_tps!=null) pl=x.prefill_tps;
+    pp.push(pl);
+  });
+  const dvals=dec.filter(v=>v!=null), pvals=pp.filter(v=>v!=null);
+  if(dvals.length<2 && pvals.length<2) return;
+  const dmax=Math.max(...dvals,1), pmax=Math.max(...pvals,1);
+  const x0=38, x1=w-42, y0=12, y1=h-12;
+  g.strokeStyle='#272e38'; g.lineWidth=1;
+  for(let i=0;i<=3;i++){
+    const y=y1-(i/3)*(y1-y0);
+    g.beginPath(); g.moveTo(x0,y); g.lineTo(x1,y); g.stroke();
+    g.fillStyle='#667281'; g.font='12px system-ui, sans-serif';
+    g.textAlign='left'; g.fillText(Math.round(dmax*i/3), 2, y+3);
+    g.textAlign='right'; g.fillText(Math.round(pmax*i/3), w-2, y+3);
+  }
+  function line(vals, max, color){
+    g.beginPath(); let first=true;
+    vals.forEach((v,i)=>{
+      if(v==null) return;
+      const px=x0+(i/(vals.length-1))*(x1-x0);
+      const py=y1-(v/max)*(y1-y0);
+      if(first){ g.moveTo(px,py); first=false; } else g.lineTo(px,py);
+    });
+    g.strokeStyle=color; g.lineWidth=2; g.stroke();
+  }
+  line(dec,dmax,'#42d3a3'); line(pp,pmax,'#5aa9e6');
+  g.font='12px system-ui, sans-serif';
+  g.fillStyle='#42d3a3'; g.textAlign='left'; g.fillText('decode t/s', x0, 10);
+  g.fillStyle='#5aa9e6'; g.textAlign='right'; g.fillText('prefill t/s', x1, 10);
+}
+
+function renderCharts(){ if(state.activeTab!=='metrics')return; const x=state.history.samples||[], last=x[x.length-1]||{}; const pp=lastHistoryValue('prefill_tps') ?? state.lastPrefill; const dec=lastHistoryValue('decode_tps') ?? state.lastDecode; $('power-now').textContent=fmt(last.system_power_w,' W'); $('tps-now').textContent=`dec ${fmt(dec)} · pp ${fmt(pp)}`; $('ram-now').textContent=bytes(last.ram_used_bytes); $('vram-now').textContent=`${fmt(last.vram_used_mib,' MiB')}`;
+  drawChart('power-chart','system_power_w','#e0ad43'); drawTokenChart(); drawChart('ram-chart','ram_used_bytes','#5aa9e6',last.ram_total_bytes); drawChart('vram-chart','vram_used_mib','#c07de6',last.vram_total_mib);
 }
 async function poll(){ try{const d=await(await fetch('/api/state')).json(); renderMonitor(d); const h=await(await fetch('/api/history?seconds=900')).json(); state.history=h; renderCharts();}catch(e){state.doorOk=false; updateOffline();} }
 

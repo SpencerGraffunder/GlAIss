@@ -17,16 +17,20 @@ trusted VPN network (in practice: Cloudflare Access on
 
 ## What it shows
 
-- llpc waitroom state: loaded model, what is generating right now, in-flight
-  requests, ordered waiting models, swap hysteresis, quantum timer, handoffs,
-  Comfy claim, intent, manual lock, manual-control suppression, and which models
-  are switched off for on-demand loading.
+- llpc waitroom state: loaded model, what is generating right now, one queue box
+  per in-flight request, ordered waiting models, swap hysteresis, quantum timer,
+  handoffs, Comfy claim, intent, manual lock, manual-control suppression, and
+  which models are switched off for on-demand loading.
 - **On-demand model switch (the Models tab checkbox).** Off means the door will
   not load that model by itself: a request naming it parks in the queue until
   you switch it back on or load it by hand, while requests behind it for an
   enabled model are admitted ahead of it. A model already generating finishes
   its stream; nothing is unloaded and no unit is touched. CLI equivalent:
   `model-control.py on-demand "<model>" --off`.
+- **DeepSeek V4.1 Flash concurrency:** the door admits one in-flight DeepSeek
+  request at a time, matching the engine's `concurrency.serving: 1`; a second
+  request waits as its own queue entry. Other models keep the arbiter's batch
+  behavior.
 - Token speed measured **by the engine** (`GET /metrics` on the loaded model's
   port): decode t/s, prefill recompute rate, KV-cache reuse, engine phase. The
   console cannot measure traffic it does not carry, so there is no proxy-side
@@ -35,7 +39,11 @@ trusted VPN network (in practice: Cloudflare Access on
   the DS4 engine (DeepSeek V4.1) reports `prompt_total` + `reused` and a null
   `hit_rate`, so prefill is `(prompt_total - reused) / prompt_ms` and KV reuse is
   `reused / prompt_total`. A live `tok_s` from the engine's `live` block wins over
-  the last finished request's average while it is generating.
+  the last finished request's average while it is generating. The Metrics chart
+  plots decode and prefill on the same canvas: decode axis and label on the left,
+  prefill axis and label on the right, each with its own scale. The tiles keep the
+  most recent prefill/decode value (history fallback) when a metric fetch is
+  momentarily empty instead of blanking.
 - Per-service rows matching the standard llpc journal command:
 
   `journalctl -u strata31 -u llama-qwen -u comfy-ui -u llama-swap -u whisper-server -u whisper-shim -u model-waitroom -u strata-dsv41.service -u llama-server`
@@ -106,6 +114,10 @@ llpc/model_control.py unload 'Qwen 3.8 27B Q6'
 llpc/model_control.py unlock
 llpc/model_control.py resume-auto
 ```
+
+UI note (2026-11-22): the console no longer exposes AUTO / Resume auto / NO LOCK /
+Unlock or Load + lock. Model availability is controlled by the per-model On demand
+checkbox; the CLI lock/unlock/resume-auto routes remain for scripted or manual use.
 
 Safety behavior:
 
@@ -200,6 +212,7 @@ calls no route that doesn't exist" (`test_ui_contract.py`), the ban on
 unreferenced top-level names (`test_no_dead_code.py`), engine token-speed
 parsing (`test_engine_metrics.py`), per-GPU card/nvidia-smi fallback, Comfy queue
 parsing and door-traffic aggregation (`test_glaiss_stats.py`), monitor routes and
-waitroom event fan-out, hysteresis/lock state, and manual-control guards. The
-waitroom's own 115-check suite runs standalone: `python3 llpc/test_waitroom.py`.
+waitroom event fan-out, hysteresis/lock state, manual-control guards, the removed
+UI controls and the dual-axis token chart, and the DeepSeek one-in-flight queue
+rule. The waitroom's own 119-check suite runs standalone: `python3 llpc/test_waitroom.py`.
 No test starts, loads, or stops a production model.

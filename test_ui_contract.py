@@ -69,20 +69,17 @@ def test_brokenness_is_what_shows_the_indicator():
         assert reason in js, f"offline indicator must name '{reason}'"
 
 
-def test_control_switches_show_state_before_action():
-    """Resume auto / Unlock were unpressable-guesswork: each is a state chip now,
-    and the button next to it is disabled with a reason when it does not apply."""
+def test_redundant_manual_controls_are_removed():
+    """Spec 2026-11-22: AUTO / Resume auto / NO LOCK / Unlock duplicated the
+    per-model enable checkboxes and are gone. Load is a plain model action."""
     html, js = _html_and_js()
-    for cid in ("chip-mode", "chip-lock", "chip-mode-text", "chip-lock-text"):
-        assert f'id="{cid}"' in html
-    for token in ("'AUTO'", "'MANUAL'", "NO LOCK", "LOCKED ·"):
-        assert token in js, f"chip must spell out {token}"
-    assert re.search(r"ra\.disabled\s*=\s*!manualOn \|\| busy", js), \
-        "Resume auto must be disabled while nothing is suppressed"
-    assert re.search(r"ub\.disabled\s*=\s*!lock \|\| busy", js), \
-        "Unlock must be disabled while nothing is locked"
-    for reason in ("already automatic — nothing to resume", "nothing is locked"):
-        assert reason in js, f"disabled control must explain itself: {reason}"
+    for cid in ("chip-mode", "chip-lock", "chip-mode-text", "chip-lock-text",
+                "resume-auto", "unlock-btn"):
+        assert f'id="{cid}"' not in html, f"{cid} must not be in the page"
+    for token in ("Resume auto", "Unlock", "AUTO", "MANUAL", "NO LOCK", "LOCKED ·"):
+        assert token not in html and token not in js, f"removed control token reappeared: {token}"
+    assert "/api/control/unlock" not in js and "/api/control/resume_auto" not in js
+    assert "lock_after_load" not in js, "Load must not re-add the lock action"
 
 
 def test_queue_shows_only_live_activity_for_five_seconds():
@@ -92,6 +89,14 @@ def test_queue_shows_only_live_activity_for_five_seconds():
     assert "m.inflight > 0" in js, "a box only counts as generating with work in flight"
     assert 'id="queue-hint"' in html and "nothing generating or queued" in html, \
         "an empty queue reads as a hint, never as a request box"
+
+
+def test_token_chart_shows_decode_and_prefill_on_two_axes():
+    html, js = _html_and_js()
+    assert "function drawTokenChart" in js
+    assert "decode t/s" in js and "prefill t/s" in js, "both series must be labeled"
+    assert "drawChart('tps-chart'" not in js, "token speed is no longer decode-only"
+    assert "inflight_requests" in js, "the queue renders one box per in-flight request"
 
 
 def test_queue_is_horizontal_and_stats_can_be_scrolled_past():

@@ -87,6 +87,17 @@ class History:
         cutoff = time.time() - seconds
         return [s for s in self.samples if s.get("ts", 0) >= cutoff]
 
+    def last_non_null(self, key: str, model: Any = None) -> Any:
+        """Most recent value for a key, optionally limited to one loaded model.
+        Keeps a token-speed tile populated when the engine metrics fetch fails."""
+        for s in reversed(self.samples):
+            if model is not None and s.get("loaded_model") != model:
+                continue
+            value = s.get(key)
+            if value is not None:
+                return value
+        return None
+
 
 class Traffic:
     """Door event counters. The console never carries traffic, but the waitroom
@@ -428,8 +439,13 @@ class Monitor:
         engine = await C.engine_metrics(loaded_row.get("port"), C.read_llama_swap_key())
         decode_tps = engine.get("decode_tps")
         prefill_tps = engine.get("prefill_tps")
+        if decode_tps is None:
+            decode_tps = self.history.last_non_null("decode_tps", current_loaded_model)
+        if prefill_tps is None:
+            prefill_tps = self.history.last_non_null("prefill_tps", current_loaded_model)
         tps_source = engine.get("source") if engine.get("ok") and (
-            decode_tps or prefill_tps) else None
+            decode_tps or prefill_tps) else (
+            "history-last" if decode_tps is not None or prefill_tps is not None else None)
         gpu_cards = engine.get("gpu_cards") or C.nvidia_gpu_cards(gpus)
         pcie_rx_mb = engine.get("pcie_rx_mb")
         pcie_tx_mb = engine.get("pcie_tx_mb")

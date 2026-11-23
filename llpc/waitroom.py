@@ -148,6 +148,9 @@ LASTMODEL_FILE = os.environ.get(
 SWAP_DESIRED_FILE = os.environ.get(
     "SWAP_DESIRED_FILE", "/home/graffunder/.llama-swap/swap-desired")
 FALLBACK_MODEL = "Qwen 3.8 Flash Next Q4"
+DS_CONCURRENCY_ONE = {
+    "deepseek v4.1 flash", "deepseek-v4.1-flash", "strata-dsv41",
+}
 STATE_TTL_S = 10.0          # cache for catalog / running lookups
 MODEL_SCAN = 262144         # bytes of body scanned for the "model" field
 FULL_PARSE_LIMIT = 8 * 1024 * 1024  # bodies below this get a full json parse
@@ -570,6 +573,7 @@ class Arbiter:
         self._timer = None
         self.active = None
         self.inflight = 0
+        self._active = []       # admitted entries, one per in-flight request
         self.batch_at = 0.0
         self.batch_n = 0
         self.idle_since = 0.0
@@ -584,6 +588,9 @@ class Arbiter:
         return {
             "active": self.active,
             "inflight": self.inflight,
+            "inflight_requests": [{"req_id": e["seq"], "model": e["model"],
+                                   "since_s": round(now - e.get("admitted_at", e["at"]), 1)}
+                                  for e in self._active],
             "quantum_left_s": left,
             "handoffs": self.handoffs,
             "waiting": [{"model": e["model"],
@@ -610,11 +617,20 @@ class Arbiter:
         place in line for visibility but never hold up anyone else."""
         return [e for e in self._q if not self._allowed(e["model"])]
 
+    def _model_limit(self, model):
+        # DeepSeek V4.1 Flash: one in-flight request, matching the engine's
+        # `concurrency.serving: 1`. Other models keep the arbiter's batch behavior.
+        if model and str(model).strip().lower() in DS_CONCURRENCY_ONE:
+            return 1
+        return None
+
     def _admit(self, entry):
         self.inflight += 1
         self.batch_n += 1
         self.idle_since = 0.0
         entry["admitted"] = True
+        entry["admitted_at"] = time.monotonic()
+        self._active.append(entry)
         entry["ev"].set()
         emit_glaiss_event("queue_admit", model=entry.get("model"), req_id=entry.get("seq"), inflight=self.inflight)
 
@@ -646,7 +662,11 @@ class Arbiter:
             # nobody else is waiting (a single-model box never stalls). Blocked
             # waiters do not count as "somebody else" — they are not next.
             if same and (not self._expired(now) or not self._others_waiting()):
-                for e in same:
+                limit = self._model_limit(self.active)
+                slots = len(same) if limit is None else max(0, limit - self.inflight)
+                if slots == 0:
+                    return
+                for e in same[:slots]:
                     self._q.remove(e)
                     self._admit(e)
                 continue
@@ -714,7 +734,7 @@ class Arbiter:
                                        timeout=max(0.05, timeout))
             except asyncio.TimeoutError:
                 if entry["admitted"]:
-                    self.release()
+                    self.release(entry)
                 else:
                     try:
                         self._q.remove(entry)
@@ -727,7 +747,7 @@ class Arbiter:
                                    blocked=not self._allowed(model))
             except asyncio.CancelledError:
                 if entry["admitted"]:
-                    self.release()
+                    self.release(entry)
                 else:
                     try:
                         self._q.remove(entry)
@@ -750,8 +770,15 @@ class Arbiter:
             self._arm()
 
     def release(self, entry=None):
-        """Give the slot back. `entry` is optional and only used for clarity."""
+        """Give the slot back. `entry` identifies the finished request."""
         self.inflight = max(0, self.inflight - 1)
+        if entry is not None:
+            try:
+                self._active.remove(entry)
+            except ValueError:
+                pass
+        elif self._active:
+            self._active.pop()
         if self.inflight == 0:
             self.idle_since = time.monotonic()
         self._pump()
@@ -1246,7 +1273,7 @@ async def handle(req: web.Request) -> web.StreamResponse:
                     return resp
                 finally:
                     if entry is not None:
-                        arb.release()
+                        arb.release(entry)
 
             # CANCEL OVERRIDE (Spec 2026-11-18): run the forward as a task and
             # watch the client. If it disconnects BEFORE the first byte of the
