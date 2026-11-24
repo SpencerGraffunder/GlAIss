@@ -10,6 +10,7 @@ Type=simple
 User=graffunder
 Environment=WAITROOM_BACKEND=http://127.0.0.1:8085
 Environment=WAITROOM_WAIT_S=1500
+Environment=WAITROOM_SWAP_HOLD_S=600
 Environment=PYTHONPATH=/opt/glaiss
 Environment=GLAISS_EVENTS_URL=http://127.0.0.1:8899/internal/waitroom/events
 ExecStart=/usr/bin/python3 /home/graffunder/llama-swap/waitroom.py

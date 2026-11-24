@@ -10,6 +10,7 @@ Run:  python3 ~/llama-swap/test_waitroom.py      (exit 0 = all green)
 import asyncio
 import importlib
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -841,6 +842,93 @@ async def t_ondemand_parked_waiter_does_not_steal_the_slot():
        "a parked waiter is never admitted and times out saying it is off-demand")
     ck(arb.active == "A" and arb.handoffs == 1,
        "a parked waiter alone does not hand the slot to nobody")
+
+
+async def t_schedule_window_blocks_only_outside_the_window():
+    """Daily enabled windows gate the door exactly like the on-demand switch,
+    but by the clock: an overnight window (20:00-06:00) blocks at 13:00 and
+    admits at 22:00; a model with no window is never blocked."""
+    from datetime import datetime
+    saved_windows, saved_disabled = W.schedule_windows, W.on_demand_disabled
+    W.on_demand_disabled = lambda now=None: []          # manual switch all on
+    try:
+        W.schedule_windows = lambda now=None: {"Night Model": {"start": "20:00", "end": "06:00"}}
+        now_dt = datetime.now()
+        noon = now_dt.replace(hour=13, minute=0, second=0, microsecond=0).timestamp()
+        night = now_dt.replace(hour=22, minute=0, second=0, microsecond=0).timestamp()
+        ck(W.model_in_schedule_window("Night Model", noon) is False,
+           "window: 13:00 is outside 20:00-06:00, so the model is parked")
+        ck(W.model_in_schedule_window("Night Model", night) is True,
+           "window: 22:00 is inside the overnight window")
+        # model_on_demand uses the REAL clock; give it a window that is closed
+        # right now no matter when the suite runs: today+2h .. today+3h would
+        # wrap, so use a 1-minute window anchored 2 hours from now.
+        closed_start = (now_dt.hour + 2) % 24
+        closed_end = (now_dt.hour + 3) % 24
+        W.schedule_windows = lambda now=None: {
+            "Later Model": {"start": f"{closed_start:02d}:00", "end": f"{closed_end:02d}:00"}}
+        ck(W.model_on_demand("Later Model") is False,
+           "window: model_on_demand parks a model whose window is closed right now")
+        W.schedule_windows = lambda now=None: {}
+        ck(W.model_on_demand("Later Model") is True,
+           "window: clearing the window un-parks the model immediately")
+        ck(W.model_in_schedule_window("Any Other Model", noon) is True,
+           "window: a model with no window loads any time")
+
+        # Daytime window crossing no midnight: 09:00-17:00.
+        W.schedule_windows = lambda now=None: {"Work Hours": {"start": "09:00", "end": "17:00"}}
+        early = now_dt.replace(hour=3, minute=0, second=0, microsecond=0).timestamp()
+        ck(W.model_in_schedule_window("Work Hours", early) is False,
+           "window: 03:00 is outside 09:00-17:00")
+        ck(W.model_in_schedule_window("Work Hours", noon) is True,
+           "window: 13:00 is inside 09:00-17:00")
+    finally:
+        W.schedule_windows, W.on_demand_disabled = saved_windows, saved_disabled
+
+
+async def t_schedule_window_parks_then_serves_through_the_door():
+    """A request naming a model outside its window parks in the queue with
+    blocked=True, and the door's parked-waiter tick serves it the moment the
+    window opens — no client retry, no unit touched."""
+    state = {"open": False}
+    async with Harness(running=[FLASH], quantum=30.0, idle_switch=0.05,
+                       wait_s=10.0) as h:
+        # The harness reloads the waitroom module on start, so patch AFTER it.
+        W.on_demand_disabled = lambda now=None: []
+        W.schedule_windows = lambda now=None: (
+            {DS: {"start": "20:00", "end": "06:00"}} if not state["open"] else {})
+        try:
+            h.client.server.app["arb"] = W.Arbiter(allowed=W.model_on_demand)
+            parked = asyncio.create_task(h.post_chat(DS))
+            await asyncio.sleep(0.3)
+            async with h.client.get("/state") as r:
+                d = await r.json()
+            ck(any(w["model"] == DS and w["blocked"] for w in d["waiting"]),
+               "window door: the request parks and /state says blocked")
+            ck("schedule_windows" in d, "window door: /state exposes the windows")
+            s, b = await h.post_chat(FLASH)
+            ck(s == 200, "window door: other traffic flows past the parked request")
+            state["open"] = True
+            s2, _ = await parked
+            ck(s2 == 200, "window door: opening the window runs the parked request")
+        finally:
+            importlib.reload(W)      # drop the stubs before the next scenario
+
+
+async def t_access_log_filter_keeps_meaningful_lines():
+    """The console polls GET /state every 2 s; those lines must stop filling
+    the journal, while POSTs and failed polls stay visible."""
+    f = W._QuietPollAccessFilter()
+    def rec(msg):
+        return logging.LogRecord("aiohttp.access", logging.INFO, "", 0, msg, None, None)
+    poll = '127.0.0.1 [23/Nov/2026:08:55:33 -0500] "GET /state HTTP/1.1" 200 658 "-" "python-httpx/0.28.1"'
+    poll500 = '127.0.0.1 [23/Nov/2026:08:55:33 -0500] "GET /state HTTP/1.1" 500 96 "-" "curl/8"'
+    chat = '192.168.1.5 [23/Nov/2026:08:55:40 -0500] "POST /v1/chat/completions HTTP/1.1" 200 9182 "-" "openai-python"'
+    ck(f.filter(rec(poll)) is False, "access filter: a 2xx GET /state poll is silenced")
+    ck(f.filter(rec(poll500)) is True, "access filter: a failing poll still logs")
+    ck(f.filter(rec(chat)) is True, "access filter: POST traffic always logs")
+    ck(f.filter(rec("model swap requested: Qwen")) is True,
+       "access filter: non-access records are untouched")
 
 
 async def t_ondemand_door_parks_one_request_and_serves_another():

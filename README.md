@@ -193,6 +193,11 @@ The console's entire HTTP surface — anything else is a 404:
 - `POST /api/control/resume_auto`
 - `POST /api/control/on_demand` — `{"model": "...", "enabled": true|false}`;
   parks a model out of the on-demand path (no unit is loaded, unloaded or locked)
+- `POST /api/control/schedule` — `{"model": "...", "start": "20:00", "end": "06:00"}`;
+  sets a model's daily enabled window (overnight windows allowed, local time).
+  Outside the window the model behaves like an off-demand model: a request
+  naming it parks in the door queue and runs on its own when the window opens.
+  `{"model": "..."}` with no start/end clears the window
 
 `/api/state` is the single read endpoint the page uses; the old slice aliases
 (`/api/model`, `/api/services`, `/api/system`, `/api/control/jobs`) and the

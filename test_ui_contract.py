@@ -82,6 +82,25 @@ def test_redundant_manual_controls_are_removed():
     assert "lock_after_load" not in js, "Load must not re-add the lock action"
 
 
+def test_redundant_tiles_and_queue_jargon_are_gone():
+    """Spec 2026-11-24: the hold tile, the engine-requests tile and the
+    'llpc waitroom console' subtitle are gone; the queue boxes stopped speaking
+    door internals (quantum/handoffs) and the loaded-model name is not echoed
+    next to the loaded-model tile."""
+    html, js = _html_and_js()
+    for cid in ("stat-hold", "stat-reqs"):
+        assert f'id="{cid}"' not in html, f"{cid} must not be in the page"
+    assert "llpc waitroom console" not in html, "the brand line is just GLAISS"
+    assert ">generating<" not in html, "the top bar tile is 'queue length' now"
+    assert 'title="Requests the door is holding' in html and "queue length" in html
+    busy_line = next((l for l in js.splitlines() if "$('stat-busy').textContent" in l), "")
+    assert "m.active" not in busy_line, "the queue-length tile must not echo the model name"
+    assert "quantum" not in js.split("function activityBoxes")[1].split("function renderQueue")[0], \
+        "queue boxes are one box per request, not quantum counters"
+    assert "handoffs" not in js.split("function activityBoxes")[1].split("function renderQueue")[0]
+    assert "quantum left" not in js, "the Models tab must say it in plain words"
+
+
 def test_queue_shows_only_live_activity_for_five_seconds():
     html, js = _html_and_js()
     assert re.search(r"const DONE_SHOW_S = 5;", js), "finished requests age out after 5 s"
@@ -99,19 +118,26 @@ def test_token_chart_shows_decode_and_prefill_on_two_axes():
     assert "inflight_requests" in js, "the queue renders one box per in-flight request"
 
 
-def test_queue_is_horizontal_and_stats_can_be_scrolled_past():
-    """Mobile: the queue is a left/right strip and the page itself scrolls, so the
-    stats block can never pin the top of the screen."""
+def test_queue_is_horizontal_and_logs_scroll_only_inside_the_box():
+    """Mobile: the queue is a left/right strip and the PAGE never scrolls
+    (Spec, 2026-11-24: the earlier whole-page-scroll mobile rule created a
+    second scroll area that stranded log follow). Scrolling happens inside the
+    ops pane, and on the Logs tab only inside #log-box."""
     html, _ = _html_and_js()
     assert re.search(r"\.qboxes\{[^}]*flex-wrap:nowrap", html), "queue boxes must not stack"
     assert re.search(r"#queue-strip\{[^}]*overflow-x:auto", html)
+    assert re.search(r"body\{[^}]*overflow:hidden", html), "the page itself must not scroll"
     mob = re.search(r"@media\(max-width:700px\)\{(.*?)\}\s*</style>", html, re.S)
     assert mob, "expected a mobile block in the stylesheet"
     css = mob.group(1)
-    assert re.search(r"body\{[^}]*overflow:auto", css), "the page must scroll on mobile"
-    assert re.search(r"\.stats\{[^}]*overflow-x:auto", css), "stats must swipe away, not stack"
-    assert re.search(r"#ops\{[^}]*flex:none", css), "the tab area must release the viewport"
-    assert re.search(r"\.ops-body\{[^}]*overflow:visible", css)
+    assert "overflow:auto" not in css and "overflow:visible" not in css, \
+        "mobile must not re-introduce a page-level scroll container"
+    assert re.search(r"\.stats\{[^}]*overflow-x:auto", html), "stats must swipe away, not stack"
+    assert re.search(r"#pane-logs\.active\{[^}]*display:flex", html), \
+        "the logs pane must be a flex column so the box can fill the screen"
+    assert re.search(r"#log-box\{[^}]*flex:1", html), "the log box fills the pane"
+    assert re.search(r"#log-box\{[^}]*overflow:auto", html), "the log box owns the scroll"
+    assert "box.scrollTop = box.scrollHeight" in html, "follow mode pins the newest line"
 
 
 def test_on_demand_switch_lives_in_the_model_catalog():
@@ -129,11 +155,38 @@ def test_model_table_does_not_repaint_under_a_click():
     cycle after toggling (found in the rendered DOM, 2026-11-21)."""
     _, js = _html_and_js()
     assert re.search(r"const sig=JSON\.stringify\(", js), "row signature required"
-    assert re.search(r"if \(sig===state\.modelsSig\) return;", js), \
-        "an unchanged model table must not be re-rendered"
+    assert re.search(r"if \(sig===state\.modelsSig\) \{ updateSpeedCells\(rows\); return; \}", js), \
+        "an unchanged model table must not be re-built (speeds refresh in place)"
     assert "state.modelsSig=null" in js, "a toggle must force the row to repaint"
     assert re.search(r"r\.name===name\) r\.on_demand=on", js), \
         "the toggle must update the row optimistically, not wait for the next poll"
+
+
+def test_model_rows_carry_their_own_speed_and_window():
+    """Per-model prefill/decode live in the catalog row, and the schedule window
+    is editable there (Spec, 2026-11-24: keep separate stats per model)."""
+    html, js = _html_and_js()
+    assert "modelSpeedCell" in js and "updateSpeedCells" in js
+    assert "x.decode_tps" in js and "x.prefill_tps" in js
+    assert "/api/control/schedule" in js and "editWindow" in js
+    assert "Window" in html, "the catalog has a schedule column"
+
+
+def test_honest_state_words_no_parked_and_loaded_together():
+    """Unloading shows 'unloading', the incoming model shows 'loading', and the
+    loaded model reports 'processing prompt'/'working' instead of 'idle'."""
+    html, js = _html_and_js()
+    for word in ("unloading", "loading", "processing prompt", "working"):
+        assert word in js, f"modelRowStatus must be able to say '{word}'"
+    assert "badge('idle'" not in js, "the catalog no longer labels a loaded model idle"
+
+
+def test_secondary_stats_render_as_whole_numbers():
+    """Spec, 2026-11-24: 'all second stats don't show decimals — round to the
+    nearest one'. The shared fmt/bytes helpers must round to integers."""
+    html, js = _html_and_js()
+    assert re.search(r"const fmt = \(x,suf=''\) => x==null \? '—' : \(Number\.isFinite\(\+x\) \? Math\.round\(\+x\) : x\)\+suf;", js)
+    assert "Math.round(n)+' '+u[i]" in js, "byte sizes round to whole units too"
 
 
 def test_the_tab_bar_wraps_rather_than_hiding_its_actions():

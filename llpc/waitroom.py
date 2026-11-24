@@ -92,7 +92,7 @@ Env: WAITROOM_PORT (8080), WAITROOM_BACKEND (http://127.0.0.1:8085, fail-open
 default when the requested model is unknown), WAITROOM_WAIT_S (1500),
 WAITROOM_POLL_S (2), WAITROOM_SWAP (http://127.0.0.1:8090), WAITROOM_INTENT_FILE
 (/home/graffunder/llama-swap/waitroom-intent), WAITROOM_INTENT_TTL_S (43200),
-WAITROOM_SWAP_HOLD_S (180), WAITROOM_LASTSWAP_FILE
+WAITROOM_SWAP_HOLD_S (600), WAITROOM_LASTSWAP_FILE
 (/home/graffunder/llama-swap/waitroom-last-swap), WAITROOM_DEFAULT_FILE
 (/home/graffunder/llama-swap/default-model), WAITROOM_LASTMODEL_FILE
 (/home/graffunder/llama-swap/last-model), WAITROOM_CONTEXT (262144),
@@ -135,7 +135,7 @@ INTENT_FILE = os.environ.get(
     "WAITROOM_INTENT_FILE", "/home/graffunder/llama-swap/waitroom-intent")
 INTENT_TTL_S = float(os.environ.get("WAITROOM_INTENT_TTL_S", "43200"))
 CONTEXT_LEN = int(os.environ.get("WAITROOM_CONTEXT", "262144"))
-SWAP_HOLD_S = float(os.environ.get("WAITROOM_SWAP_HOLD_S", "180"))
+SWAP_HOLD_S = float(os.environ.get("WAITROOM_SWAP_HOLD_S", "600"))
 QUANTUM_S = float(os.environ.get("WAITROOM_QUANTUM_S", "120"))
 QUANTUM_N = int(os.environ.get("WAITROOM_QUANTUM_N", "8"))
 IDLE_SWITCH_S = float(os.environ.get("WAITROOM_IDLE_SWITCH_S", "30"))
@@ -160,6 +160,37 @@ PARK_WAKE_S = float(os.environ.get("WAITROOM_PARK_WAKE_S", "15"))  # hysteresis-
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s waitroom %(levelname)s %(message)s")
 log = logging.getLogger("waitroom")
+
+
+class _QuietPollAccessFilter(logging.Filter):
+    """Silence the access-log spam from the console/watchdog GET polls.
+
+    aiohttp logs every request through the `aiohttp.access` logger, and this
+    service's log format stamps those lines `waitroom INFO` — the GlAIss
+    monitor alone polls GET /state every couple of seconds. Meaningful events
+    are already logged explicitly (swaps, parks, cancels, timeouts), so drop
+    successful read-only poll lines and keep everything else: every POST, and
+    any error response, even on a poll path.
+    """
+
+    QUIET_PATHS = ("/state", "/queue", "/metrics", "/health", "/models", "/v1/models")
+    _RE = re.compile(r'"GET (/[^" ]*) HTTP/[^"]*"\s+(\d{3})')
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        m = self._RE.search(msg)
+        if not m:
+            return True
+        path, status = m.group(1), m.group(2)
+        if path in self.QUIET_PATHS and status.startswith("2"):
+            return False
+        return True
+
+
+logging.getLogger("aiohttp.access").addFilter(_QuietPollAccessFilter())
 
 GLAISS_EVENTS_URL = os.environ.get(
     "GLAISS_EVENTS_URL",
@@ -243,15 +274,47 @@ def on_demand_disabled(now=None) -> list:
     return _ONDEMAND_CACHE["disabled"]
 
 
-def model_on_demand(model) -> bool:
-    """False means the operator took this model off the on-demand path."""
-    disabled = on_demand_disabled()
-    if mctl is None or not disabled:
+# Daily enabled windows (model-schedule.json, same 1-second cache discipline):
+# a model with a window is off the on-demand path OUTSIDE that window, so e.g.
+# "DeepSeek only at night" parks daytime requests without anyone touching a
+# unit. The parked-waiter tick (ONDEMAND_POLL_S) re-pumps, so a parked request
+# is admitted the moment its window opens. Fail-open, same as the off list.
+_SCHEDULE_CACHE = {"at": 0.0, "windows": {}}
+
+
+def schedule_windows(now=None) -> dict:
+    now = time.time() if now is None else now
+    if (now - _SCHEDULE_CACHE["at"]) >= ONDEMAND_REFRESH_S:
+        _SCHEDULE_CACHE["at"] = now
+        if mctl is not None:
+            try:
+                _SCHEDULE_CACHE["windows"] = mctl.read_schedule()
+            except Exception as e:
+                log.debug("model schedule unreadable: %s", e)
+    return _SCHEDULE_CACHE["windows"]
+
+
+def model_in_schedule_window(model, now=None) -> bool:
+    if mctl is None:
         return True
     try:
-        return not mctl.on_demand_blocked(model, disabled)
+        return mctl.schedule_allows(model, schedule_windows(now), now)
     except Exception:
         return True
+
+
+def model_on_demand(model) -> bool:
+    """False means this model may not be auto-loaded right now: either the
+    operator took it off the on-demand path, or the clock is outside its daily
+    enabled window."""
+    disabled = on_demand_disabled()
+    if mctl is not None and disabled:
+        try:
+            if mctl.on_demand_blocked(model, disabled):
+                return False
+        except Exception:
+            return True
+    return model_in_schedule_window(model)
 
 
 def lock_rejection_if_needed(st, model_name):
@@ -1141,6 +1204,7 @@ async def handle(req: web.Request) -> web.StreamResponse:
             "lock": control_lock_payload(),
             "manual_control": control_manual_payload(),
             "on_demand_disabled": on_demand_disabled(),
+            "schedule_windows": schedule_windows(),
             "model_control_module": mctl is not None,
         }
         if arb is not None:

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>GlAIss · llpc waitroom console</title>
+<title>GlAIss</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
@@ -42,14 +42,13 @@
   #ops-tabs{border-bottom:1px solid var(--border);display:flex;gap:2px;padding:6px 8px;background:var(--panel);align-items:center;flex-wrap:wrap}
   .tab{background:none;border:0;color:var(--dim);padding:7px 11px;cursor:pointer;border-bottom:2px solid transparent;flex:0 0 auto}.tab.active{color:var(--accent);border-bottom-color:var(--accent)}.tab-count{color:var(--accent);font-size:10px}
   #ops-actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  /* The two operator switches, shown as state first and action second, so you
-     can read whether they are engaged without pressing anything. */
-  .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700;color:var(--dim);background:#161a20;cursor:help;white-space:nowrap}
-  .chip .dot{width:8px;height:8px;border-radius:50%;background:#4a5563}
-  .chip.on{color:var(--accent);border-color:#255a49;background:#12291f}.chip.on .dot{background:var(--accent)}
-  .chip.hold{color:var(--warn);border-color:#5d4a20;background:#241d0f}.chip.hold .dot{background:var(--warn)}
   #job-badge{display:none;font-size:11px;color:var(--warn);white-space:nowrap}#job-badge.show{display:inline}
   .ops-body{flex:1;min-height:0;overflow:auto;padding:10px}.tabpane{display:none;height:100%}.tabpane.active{display:block}
+  /* Logs: the pane owns the screen and the log box owns the scroll. The page
+     and .ops-body must never scroll on this tab — two nested scroll areas is
+     how "follow" ended up stranded a hundred lines above the latest line. */
+  #pane-logs.active{display:flex;flex-direction:column;height:100%;min-height:0}
+  #pane-logs .panel{display:flex;flex-direction:column;flex:1;min-height:0}
   .grid{display:grid;grid-template-columns:340px minmax(520px,1fr);gap:10px}.panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}.panel h3{margin:0 0 8px;font-size:11px;color:var(--accent2);text-transform:uppercase;letter-spacing:1px}
   .kv{display:grid;grid-template-columns:125px 1fr;gap:6px 9px;font-size:12px}.kv div:nth-child(odd){color:var(--dim)}.badge{display:inline-block;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:800;background:#2b333d;color:var(--dim)}.badge.loaded{background:#15392d;color:var(--accent)}.badge.locked{background:#3c311b;color:var(--warn)}.badge.error{background:#3c1d22;color:var(--err)}
   .banner{display:none;border:1px solid #5d4a20;background:#241d0f;color:#f1cc7d;border-radius:5px;padding:7px 9px;font-size:11px;margin:0 0 8px}.banner.show{display:block}
@@ -57,7 +56,7 @@
   td.oncol{text-align:center}
   .btns{display:flex;gap:4px;flex-wrap:wrap}.mini{background:#20262e;border:1px solid var(--border);border-radius:3px;color:var(--text);padding:3px 6px;cursor:pointer;font-size:10px}.mini:hover:not(:disabled){border-color:var(--accent)}.mini.warn:hover{border-color:var(--warn);color:var(--warn)}.mini:disabled{opacity:.38;cursor:not-allowed}
   .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}.toolbar select,.toolbar input{background:#0b0d10;border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px;font:11px var(--mono)}
-  #log-box{height:calc(100% - 36px);overflow:auto;background:#080a0c;border:1px solid var(--border);border-radius:5px;padding:7px;line-height:1.35}
+  #log-box{flex:1;min-height:0;overflow:auto;background:#080a0c;border:1px solid var(--border);border-radius:5px;padding:7px;line-height:1.35}
   .log{padding:2px 0;border-bottom:1px solid #15191e}.log .time{color:#5b6672;margin-right:6px}.log .unit{color:var(--accent2);margin-right:6px}.log.error{color:#ff9d9d}.log.warn{color:#f1cc7d}
   .charts{display:grid;grid-template-columns:1fr 1fr;gap:10px}.chart{height:190px;background:#090b0e;border:1px solid var(--border);border-radius:6px;padding:8px} .chart canvas{width:100%;height:145px;display:block}.chart-title{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}.chart-value{float:right;color:var(--accent)}
   .gpu-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -71,11 +70,12 @@
   .twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
   ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#2b323a;border-radius:4px}
   @media(max-width:1080px){.grid{grid-template-columns:1fr}.charts{grid-template-columns:1fr}.twocol,.gpu-cards{grid-template-columns:1fr}}
-  /* Mobile: the whole page scrolls. Nothing pins the stats or the queue in
-     place, and neither of them grows vertically. */
+  /* Mobile: same one-scroll-container rule as desktop — the page itself never
+     scrolls, scrolling happens inside the ops pane (or inside the log box on
+     the Logs tab). The earlier "whole page scrolls" experiment created a
+     second scroll area and stranded the log follow; the smaller top bar means
+     it is no longer needed. */
   @media(max-width:700px){
-    html,body{height:auto;min-height:100%}
-    body{overflow:auto;display:block}
     #topbar{padding:8px 10px;gap:10px}
     #offline{order:3}
     .stats{flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
@@ -84,27 +84,24 @@
     #ops-tabs{padding:6px 8px 2px}
     #ops-actions{margin-left:0;width:100%;padding:3px 0 6px;justify-content:flex-start}
     #last-event{display:none}
-    #ops{flex:none;height:auto;min-height:0}
-    .ops-body{overflow:visible;padding:8px}
+    .ops-body{padding:8px}
     #ops-actions{margin-left:0;width:100%;padding-top:2px}
     .panel{overflow-x:auto}
-    #log-box{height:auto;max-height:65vh}
+    #pane-logs .panel{overflow-x:hidden}
     .chart{height:170px}
   }
 </style>
 </head>
 <body>
 <header id="topbar">
-  <div id="brand">GLAISS <small>llpc waitroom console</small></div>
+  <div id="brand">GLAISS</div>
   <div id="offline"><span class="dot"></span><span id="offline-text">disconnected</span></div>
   <div class="stats">
     <div class="stat"><div class="label">loaded model</div><div class="value v-blue" id="stat-loaded">—</div></div>
-    <div class="stat"><div class="label">generating</div><div class="value v-accent" id="stat-busy">idle</div></div>
-    <div class="stat"><div class="label">hold</div><div class="value" id="stat-hold">—</div></div>
+    <div class="stat"><div class="label" title="Requests the door is holding: generating now plus queued behind them. The model name is not repeated here — the loaded-model tile already says it.">queue length</div><div class="value v-accent" id="stat-busy">0</div></div>
     <div class="stat"><div class="label">waiting</div><div class="value" id="stat-wait">0</div></div>
     <div class="stat"><div class="label">prefill</div><div class="value v-blue" id="stat-pp">—</div></div>
     <div class="stat"><div class="label">decode</div><div class="value v-accent" id="stat-decode">—</div></div>
-    <div class="stat"><div class="label">engine reqs</div><div class="value" id="stat-reqs">0</div></div>
     <div class="stat"><div class="label">system</div><div class="value" id="stat-power">—</div></div>
     <div class="stat"><div class="label">RAM</div><div class="value" id="stat-ram">—</div></div>
     <div class="stat"><div class="label">VRAM</div><div class="value" id="stat-vram">—</div></div>
@@ -139,7 +136,7 @@
           <h3>Model catalog</h3>
           <div class="banner" id="ondemand-warn"></div>
           <div class="toolbar"><button class="ghost" id="refresh-state">Refresh</button><span class="small" id="registry-status"></span></div>
-          <table><thead><tr><th>Model</th><th>Engine</th><th>State</th><th title="On = the waitroom may load this model by itself when a request asks for it. Off = a request naming it waits in the queue until you turn it back on or load it by hand.">On demand</th><th>Actions</th></tr></thead><tbody id="models-body"></tbody></table>
+          <table><thead><tr><th>Model</th><th>Engine</th><th>State</th><th title="This model's own last-seen prefill/decode speed (whole tokens/s). Only the loaded model's numbers are live; parked models show their previous session.">Speed</th><th title="On = the waitroom may load this model by itself when a request asks for it. Off = a request naming it waits in the queue until you turn it back on or load it by hand.">On demand</th><th title="Daily window during which the waitroom may load this model. Outside it, requests park and run when the window opens.">Window</th><th>Actions</th></tr></thead><tbody id="models-body"></tbody></table>
         </section>
       </div>
     </div>
@@ -169,8 +166,8 @@
 <script>
 const $ = x => document.getElementById(String(x).replace(/^#/, ''));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmt = (x,suf='') => x==null ? '—' : (Number.isFinite(+x) ? Math.round(+x*10)/10 : x)+suf;
-const bytes = x => { if(x==null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let n=+x,i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return Math.round(n*10)/10+' '+u[i]; };
+const fmt = (x,suf='') => x==null ? '—' : (Number.isFinite(+x) ? Math.round(+x) : x)+suf;
+const bytes = x => { if(x==null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let n=+x,i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return Math.round(n)+' '+u[i]; };
 
 // A request stays on screen for this long after its model stops generating.
 const DONE_SHOW_S = 5;
@@ -184,10 +181,33 @@ $('queue-title').title = 'The waitroom door owns this queue; GlAIss only reads i
   + 'requests here instead of loading.';
 
 // --- queue: generating / queued / just finished, and nothing else ------------
+// One request = one box. A second request on the SAME model is its own box,
+// never a counter bolted onto the first box (Spec 2026-11-24). The door's
+// `inflight_requests` list is the source; the fallback (older door builds)
+// synthesizes one box per in-flight request from the count.
 function noteFinished(model) {
   if (!model) return;
   state.done = state.done.filter(x => x.model !== model);
   state.done.push({model, at: Date.now()/1000});
+}
+
+function windowNow(win) {
+  // Mirrors model_state.schedule_allows for the door's nightly windows.
+  if (!win || !win.start || !win.end) return true;
+  const [sh, sm] = win.start.split(':').map(Number), [eh, em] = win.end.split(':').map(Number);
+  const now = new Date(), mins = now.getHours()*60 + now.getMinutes();
+  const s = sh*60+sm, e = eh*60+em;
+  return s <= e ? (mins >= s && mins < e) : (mins >= s || mins < e);
+}
+
+function blockedReason(model, m) {
+  // A parked request is parked for one of two reasons: the On demand switch is
+  // off, or the clock sits outside that model's enabled window. Say which.
+  const key = Object.keys(m.schedule_windows || {})
+    .find(k => k.toLowerCase() === String(model).toLowerCase());
+  if (key && !windowNow(m.schedule_windows[key]))
+    return `waiting for window ${m.schedule_windows[key].start}–${m.schedule_windows[key].end}`;
+  return 'off demand';
 }
 
 function activityBoxes(m) {
@@ -200,16 +220,19 @@ function activityBoxes(m) {
       : Array.from({length: m.inflight || 0}, () => ({model: m.active, req_id: null}));
     reqs.forEach((r, i) => {
       const b = document.createElement('div'); b.className='qbox running';
-      b.innerHTML=`<div class="a"><b>${esc(r.model || m.active)}</b><span class="small">generating</span></div>`
-        +`<div class="m"><span>request <b>${i+1}</b>${r.req_id!=null?` · id ${esc(r.req_id)}`:''}</span><span>quantum <b>${fmt(m.quantum_left_s,'s')}</b></span><span>handoffs <b>${m.handoffs??0}</b></span></div>`;
+      b.innerHTML=`<div class="a"><b>${esc(r.model || m.active)}</b><span class="small">in flight</span></div>`
+        +`<div class="m"><span>request <b>${i+1}</b>${r.req_id!=null?` · id ${esc(r.req_id)}`:''}</span>`
+        +(r.since_s!=null?`<span>for <b>${fmt(r.since_s,'s')}</b></span>`:'')
+        +`</div>`;
       boxes.push(b);
     });
   }
   (m?.waiting||[]).forEach(w => {
     const b = document.createElement('div');
     b.className = 'qbox ' + (w.blocked ? 'blocked' : 'queued');
-    b.innerHTML = `<div class="a"><b>${esc(w.model)}</b><span class="small">${w.blocked?'off demand':'waiting'}</span></div>`
-      + `<div class="m"><span>waited <b>${fmt(w.waited_s,'s')}</b></span>${w.blocked?`<span title="You switched this model off under Models · On demand. Its request will wait here until you switch it back on or load the model by hand.">won't load</span>`:''}</div>`;
+    const reason = w.blocked ? blockedReason(w.model, m) : 'waiting';
+    b.innerHTML = `<div class="a"><b>${esc(w.model)}</b><span class="small">${esc(reason)}</span></div>`
+      + `<div class="m"><span>waited <b>${fmt(w.waited_s,'s')}</b></span>${w.blocked?`<span title="This model cannot load right now (its On demand switch is off or the clock is outside its enabled window). The request waits here and runs on its own the moment the model is allowed again.">won't load yet</span>`:''}</div>`;
     boxes.push(b);
   });
   state.done.forEach(x => {
@@ -258,9 +281,12 @@ function renderMonitor(d) {
   state.data=d; const s=d.system||{}, m=d.model||{}, col=d.collectors||{};
   state.doorOk = !!col.waitroom?.ok;
   $('stat-loaded').textContent=m.current_loaded_model||m.loaded_model||'none';
-  $('stat-busy').textContent=(m.inflight>0 && m.active) ? `${m.inflight} · ${m.active}` : 'idle';
-  $('stat-busy').className='value '+(m.inflight>0?'v-accent':'');
-  $('stat-hold').textContent=fmt(m.hold_remaining_s,'s'); $('stat-wait').textContent=(m.waiting||[]).length;
+  // "queue length" = everything the door is holding (in flight + waiting). The
+  // model name deliberately is NOT repeated here — the loaded-model tile
+  // already shows it and the queue strip shows one box per request.
+  $('stat-busy').textContent=(m.inflight||0)+((m.waiting||[]).length);
+  $('stat-busy').className='value '+((m.inflight||0)>0?'v-accent':'');
+  $('stat-wait').textContent=(m.waiting||[]).length;
   const pp = s.prefill_tps != null ? s.prefill_tps : (lastHistoryValue('prefill_tps') ?? state.lastPrefill);
   const dec = s.decode_tps != null ? s.decode_tps : (lastHistoryValue('decode_tps') ?? state.lastDecode);
   if (s.prefill_tps != null) state.lastPrefill = s.prefill_tps;
@@ -268,27 +294,86 @@ function renderMonitor(d) {
   $('stat-pp').textContent=fmt(pp,' t/s'); $('stat-decode').textContent=fmt(dec,' t/s');
   const tpsNote=`source: ${s.token_speed_source||'—'} · engine: ${s.engine_phase||'idle'} · KV reuse: ${s.engine_cache_hit_rate!=null?Math.round(s.engine_cache_hit_rate*100)+'%':'—'}`;
   $('stat-pp').title=tpsNote; $('stat-decode').title=tpsNote;
-  $('stat-reqs').textContent = s.engine_requests ?? '—';
   $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W'); $('stat-ram').textContent=bytes(s.ram_used_bytes); $('stat-vram').textContent=bytes((s.vram_used_mib||0)*1048576);
   renderQueue(m);
   renderGpuCards(d); renderTraffic(d); renderComfy(d); renderStt(d);
-  renderCurrent(d); renderModels(d); renderServices(d.services||[]); renderJobs((d.control||{}).jobs||[]); updateOffline(); renderCharts();
+  // Jobs first: a running load/unload job must be in state.jobs before the
+  // catalog renders, so "loading"/"unloading" shows on the same poll it starts.
+  renderJobs((d.control||{}).jobs||[]);
+  renderCurrent(d); renderModels(d); renderServices(d.services||[]); syncJobBadge(); updateOffline(); renderCharts();
 }
 
 function renderCurrent(d) {
   const m=d.model||{};
+  const wins=Object.entries(m.schedule_windows||{});
   $('current-slot').innerHTML=`
-    <div>Loaded</div><div>${badge(m.current_loaded_model?'loaded':'inactive',m.current_loaded_model?'loaded':'',m.current_loaded_model||'none')} ${esc(m.loaded_state||'')}</div>
-    <div>Hysteresis</div><div>${fmt(m.hold_remaining_s,'s')} / ${fmt(m.swap_hold_s,'s')}</div>
-    <div>Slot</div><div>${fmt(m.quantum_left_s,'s')} quantum left · ${m.inflight??0} in flight · ${m.handoffs??0} handoffs</div>
+    <div>Loaded</div><div>${badge(m.current_loaded_model?'loaded':'inactive',m.current_loaded_model?'loaded':m.loaded_state||'',m.current_loaded_model||'none')} ${esc(m.loaded_state||'')}</div>
+    <div>Switch guard</div><div title="After a model swap finishes, the slot stays claimed for this long so the door does not thrash between two models.">${fmt(m.hold_remaining_s,'s')} left of ${fmt(m.swap_hold_s,'s')}</div>
+    <div>Turn</div><div title="How long the loaded model keeps the slot before another model with waiting requests may take it.">${fmt(m.quantum_left_s,'s')} left · ${m.inflight??0} in flight</div>
     <div>Comfy claim</div><div>${m.comfy_claimed?badge('claimed','locked',`claimed (${esc(m.desired_unit||'')})`):'not claimed'}</div>
-    <div>Off demand</div><div>${(m.on_demand_disabled||[]).length?esc((m.on_demand_disabled||[]).join(', ')):'none — every model may load'}</div>`;
+    <div>Off demand</div><div>${(m.on_demand_disabled||[]).length?esc((m.on_demand_disabled||[]).join(', ')):'none — every model may load'}</div>
+    <div>Windows</div><div>${wins.length?wins.map(([k,v])=>esc(k)+' '+esc(v.start)+'–'+esc(v.end)+(windowNow(v)?'':' (closed now)')).join('<br>'):'no windows set — models load any time'}</div>`;
 }
 
 function modelActions(x){ const dis=x.unlisted?'disabled':'';
  return `<div class="btns"><button class="mini" ${dis} onclick='loadModel(${JSON.stringify(x.name)})'>Load</button>
   <button class="mini" onclick='unloadModel(${JSON.stringify(x.name)})'>Unload</button></div>`;
 }
+
+// A row's single honest status word. Only ONE of these can show at a time, so
+// "loaded" and "parked" can never sit side by side mid-unload, and the loaded
+// model says what the engine is actually doing instead of "idle".
+function modelRowStatus(x, d) {
+  const job = (state.jobs||[]).find(j => j.model===x.name && ['queued','running'].includes(j.status));
+  if (job) {
+    if (job.action==='unload') return badge('unloading','locked');
+    if (job.action==='load') return badge('loading','loaded');
+    return badge(job.action,'');
+  }
+  if (x.loaded) {
+    const s=d.system||{}, m=d.model||{};
+    const working = (m.active===x.name || !m.active) && (m.inflight||0)>0;
+    const phase = String(s.engine_phase||'').toLowerCase();
+    if (working && /prefill|prompt|read/.test(phase)) return badge('processing prompt','loaded');
+    if (working) return badge('working','loaded');
+    return badge('loaded','loaded') + (x.on_demand===false ? ' <span class="small" title="On demand is off: this keeps serving, but a NEW request naming it will wait.">off demand</span>' : '');
+  }
+  if (x.on_demand===false) return badge('parked','locked');
+  if (x.allowed_now===false) return badge('window closed','locked');
+  return '<span class="small" title="Not loaded; a request naming it will load it.">ready</span>';
+}
+
+function modelSpeedCell(x) {
+  const live = x.loaded && x.token_speed_source==='engine/metrics';
+  const dec = x.decode_tps==null?'—':fmt(x.decode_tps);
+  const pp = x.prefill_tps==null?'—':fmt(x.prefill_tps);
+  const note = x.loaded ? (live?'live':'since load') : 'last session';
+  return `<div class="small" title="${esc(note)} speed">dec <b>${dec}</b> · pp <b>${pp}</b></div>`;
+}
+
+function modelWindowCell(x) {
+  const w = x.schedule;
+  const txt = w ? `${esc(w.start)}–${esc(w.end)}` : 'always';
+  const closed = w && !windowNow(w) ? ' <span class="small">(closed)</span>' : '';
+  return `<span class="small">${txt}</span>${closed} <button class="mini" onclick='editWindow(${JSON.stringify(x.name)}, this)'>set</button>`;
+}
+
+window.editWindow = async (name, btn) => {
+  // Daily enabled window: HH:MM-HH:MM. Overnight is fine (20:00-06:00 =
+  // evenings only). Blank clears it and the model may load any time again.
+  const row = (state.data?.models||[]).find(r=>r.name===name)||{};
+  const cur = row.schedule ? `${row.schedule.start}-${row.schedule.end}` : '';
+  const v = prompt(`Enabled window for ${name} — HH:MM-HH:MM (crossing midnight ok, e.g. 20:00-06:00). Leave blank to allow all day.`, cur);
+  if (v===null) return;
+  const parts = v.trim().split('-').map(s=>s.trim());
+  if (v.trim() && (parts.length!==2 || !/^\d{1,2}:\d{2}$/.test(parts[0]) || !/^\d{1,2}:\d{2}$/.test(parts[1])))
+    { alert('Use HH:MM-HH:MM, e.g. 20:00-06:00'); return; }
+  if (btn) btn.disabled = true;
+  try {
+    await post('/api/control/schedule', v.trim() ? {model:name, start:parts[0], end:parts[1]} : {model:name});
+  } catch(e){ alert(e.message); }
+  if (btn) btn.disabled = false;
+};
 
 function renderModels(d){
   const rows=d.models||[]; const dis=d.model?.on_demand_disabled||[];
@@ -301,18 +386,26 @@ function renderModels(d){
   else warn.classList.remove('show');
   // The poll repaints every 2 s. Rebuilding the table anyway would replace the
   // checkbox a click is landing on (and flash a stale value after a toggle), so
-  // only re-render when something in it actually changed.
-  const sig=JSON.stringify([rows.map(x=>[x.name,x.loaded,!!x.locked,x.on_demand!==false,!!x.unlisted,x.unit,x.port,x.current_version]),warn.classList.contains('show')]);
-  if (sig===state.modelsSig) return;
+  // only re-render when something in it actually changed. Speeds change every
+  // poll, so they refresh in place (updateSpeedCells) instead of joining the
+  // signature.
+  const sig=JSON.stringify([rows.map(x=>[x.name,x.loaded,!!x.locked,x.on_demand!==false,x.allowed_now!==false,!!x.unlisted,x.unit,x.port,x.current_version,modelRowStatus(x,d),JSON.stringify(x.schedule||null)]),warn.classList.contains('show')]);
+  if (sig===state.modelsSig) { updateSpeedCells(rows); return; }
   state.modelsSig=sig;
-  $('models-body').innerHTML=rows.map(x=>{
+  $('models-body').innerHTML=rows.map((x,i)=>{
     const on = x.on_demand!==false;
     return `<tr><td><b>${esc(x.name)}</b>${x.unlisted?' <span class="small">unlisted</span>':''}<div class="small">${(x.aliases||[]).slice(0,3).map(esc).join(' · ')}</div></td>`
      +`<td>${esc(x.unit||'?')}<div class="small">:${x.port||'?'} · ${x.text===false?'media':'text'}</div></td>`
-     +`<td>${x.loaded?badge('loaded','loaded'):''}${x.loaded?' ':''}${on?badge('idle',''):'<span class="badge locked">parked</span>'}<div class="small">${esc(x.current_version||'')}</div></td>`
+     +`<td>${modelRowStatus(x,d)}<div class="small">${esc(x.current_version||'')}</div></td>`
+     +`<td id="spd-${i}">${modelSpeedCell(x)}</td>`
      +`<td class="oncol"><input type="checkbox" ${on?'checked':''} aria-label="Load ${esc(x.name)} on demand" onchange='setOnDemand(${JSON.stringify(x.name)},this.checked)'></td>`
+     +`<td>${modelWindowCell(x)}</td>`
      +`<td>${modelActions(x)}</td></tr>`;
-  }).join('')||'<tr><td colspan=5>No registry models found.</td></tr>';
+  }).join('')||'<tr><td colspan=7>No registry models found.</td></tr>';
+}
+
+function updateSpeedCells(rows){
+  rows.forEach((x,i)=>{ const el=document.getElementById('spd-'+i); if(el) el.innerHTML=modelSpeedCell(x); });
 }
 
 function renderServices(rows){ $('service-count').textContent=rows.length; $('services-body').innerHTML=rows.map(r=>{ const logs=r.logs||{}, err=logs.error||0, warn=logs.warn||0; return `<tr><td><b>${esc(r.display)}</b><div class="small">${esc(r.display_label||r.unit||'synthetic process')}</div></td><td>${badge(r.state, ['active','process-active'].includes(r.state)?'loaded':(r.state==='inactive'?'':'error'))}<div class="small">${esc(r.sub_state||'')} · ${r.restarts??0} restarts</div></td><td class="num">${r.main_pid||'—'}</td><td class="num">${fmt(r.cpu_percent,'%')}</td><td class="num">${fmt(r.rss_mib,' MiB')}</td><td class="num">${fmt(r.vram_mib,' MiB')}</td><td class="num ${err?'v-err':warn?'v-warn':''}">${err}/${warn}</td><td class="small" title="${esc((logs.last||{}).text||'')}">${esc(((logs.last||{}).text||'—').slice(0,100))}</td></tr>`}).join('');
@@ -321,12 +414,15 @@ function renderServices(rows){ $('service-count').textContent=rows.length; $('se
 
 function renderJobs(jobs){
   state.jobs=jobs||[];
-  const running=jobs.find(x=>['queued','running'].includes(x.status));
+  syncJobBadge();
+  if (state.data) renderCurrent(state.data);
+}
+function syncJobBadge(){
+  const running=(state.jobs||[]).find(x=>['queued','running'].includes(x.status));
   const badgeEl=$('job-badge');
   if (running) { badgeEl.textContent=`${running.action} ${running.model||''} · ${running.status}`; badgeEl.classList.add('show'); }
   else badgeEl.classList.remove('show');
   document.querySelectorAll('.mini').forEach(x=>x.disabled=!!running);
-  if (state.data) renderCurrent(state.data);
 }
 
 async function post(path,body){ const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})}); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d?.error?.message||d?.detail||r.statusText); renderJobs(d.job?[d.job]:state.jobs); setTimeout(poll,300); return d; }
@@ -349,7 +445,21 @@ window.setOnDemand=async (name,enabled)=>{
 };
 $('refresh-state').onclick=poll;
 
-async function pollLogs(){ const q=new URLSearchParams({limit:500}); if($('log-unit').value)q.set('unit',$('log-unit').value); if($('log-level').value)q.set('level',$('log-level').value); try{const d=await(await fetch('/api/logs?'+q)).json(); $('log-status').textContent=d.status?.running?`journal follow active · ${d.logs.length} shown`:'journal collector not running'; $('log-box').innerHTML=d.logs.map(x=>`<div class="log ${x.severity}"><span class="time">${new Date(x.ts*1000).toLocaleTimeString()}</span><span class="unit">${esc((x.unit||[]).join(','))}</span>${esc(x.text)}</div>`).join(''); }catch(e){$('log-status').textContent='logs unavailable';} }
+// Logs follow mode: keep the newest line pinned ONLY when the view was already
+// at the bottom. If the operator scrolled up to read, leave them there.
+async function pollLogs(){
+  const q=new URLSearchParams({limit:500});
+  if($('log-unit').value)q.set('unit',$('log-unit').value);
+  if($('log-level').value)q.set('level',$('log-level').value);
+  const box=$('log-box');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  try{
+    const d=await(await fetch('/api/logs?'+q)).json();
+    $('log-status').textContent=d.status?.running?`journal follow active · ${d.logs.length} shown`:'journal collector not running';
+    box.innerHTML=d.logs.map(x=>`<div class="log ${x.severity}"><span class="time">${new Date(x.ts*1000).toLocaleTimeString()}</span><span class="unit">${esc((x.unit||[]).join(','))}</span>${esc(x.text)}</div>`).join('');
+    if ($('log-follow').checked && atBottom) box.scrollTop = box.scrollHeight;
+  }catch(e){$('log-status').textContent='logs unavailable';}
+}
 function drawChart(id,key,color,scaleTotal){ const c=$(id), dpr=devicePixelRatio||1; c.width=c.clientWidth*dpr;c.height=c.clientHeight*dpr; const g=c.getContext('2d'); g.scale(dpr,dpr); const w=c.clientWidth,h=c.clientHeight; g.clearRect(0,0,w,h); const xs=(state.history.samples||[]); if(!xs.length)return; const vals=xs.map(x=>x[key]).filter(v=>v!=null); if(vals.length<2)return; const max=scaleTotal||Math.max(...vals,1), min=0; g.strokeStyle='#272e38';g.lineWidth=1; for(let i=0;i<=3;i++){let y=h-(i/3)*h;g.beginPath();g.moveTo(34,y);g.lineTo(w-4,y);g.stroke();g.fillStyle='#667281';g.fillText(Math.round(max*i/3),0,y-3)} g.beginPath(); xs.forEach((x,i)=>{const v=x[key]; if(v==null)return; const px=34+(i/(xs.length-1))*(w-38), py=h-((v-min)/(max-min||1))*(h-10); i?g.lineTo(px,py):g.moveTo(px,py)}); g.strokeStyle=color;g.lineWidth=2;g.stroke(); }
 function renderGpuCards(d){
   const el=$('gpu-cards'), s=d.system||{}, cards=s.gpu_cards||[];

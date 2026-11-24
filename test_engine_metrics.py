@@ -23,10 +23,11 @@ def test_parse_engine_metrics_prefers_live_then_last_request():
     out = C.parse_engine_metrics(ENGINE_FIXTURE)
     assert out["ok"] is True
     # An actively generating engine reports tok_s; that live rate beats the
-    # finished request's average (the fixture's live tok_s is 64.2).
-    assert out["decode_tps"] == 64.2
+    # finished request's average (the fixture's live tok_s is 64.2). Speeds are
+    # whole t/s — Spec: secondary stats never show decimals.
+    assert out["decode_tps"] == 64
     # prefill must use prompt_read (recomputed tokens), not prompt_total (KV-reused)
-    assert out["prefill_tps"] == round(196 / 5.3531, 1)
+    assert out["prefill_tps"] == round(196 / 5.3531)
     assert out["cache_hit_rate"] == 0.773
     assert out["phase"] == "generating"
     assert out["requests"] == 2
@@ -34,13 +35,13 @@ def test_parse_engine_metrics_prefers_live_then_last_request():
 
     # Idle engine: no live tok_s, so the last finished request's rate is used.
     idle = {**ENGINE_FIXTURE, "live": {"state": "idle"}}
-    assert C.parse_engine_metrics(idle)["decode_tps"] == 67.1
+    assert C.parse_engine_metrics(idle)["decode_tps"] == 67
 
 
 def test_parse_engine_metrics_falls_back_to_history_tail():
     fixture = {"history": {"tok_s": [10.0, 0.0, 45.5, 0.0]}, "live": {}}
     out = C.parse_engine_metrics(fixture)
-    assert out["decode_tps"] == 45.5
+    assert out["decode_tps"] == round(45.5)
     assert out["prefill_tps"] is None
 
 

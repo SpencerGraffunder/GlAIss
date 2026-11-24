@@ -17,7 +17,8 @@ class ConsoleLike:
 
 
 def make_monitor(tmp_path: Path, monkeypatch):
-    for attr in ("DEFAULT_LOCK_FILE", "DEFAULT_MANUAL_FILE", "DEFAULT_ONDEMAND_FILE"):
+    for attr in ("DEFAULT_LOCK_FILE", "DEFAULT_MANUAL_FILE", "DEFAULT_ONDEMAND_FILE",
+                 "DEFAULT_SCHEDULE_FILE", "DEFAULT_TOKEN_STATS_FILE"):
         monkeypatch.setattr(state, attr, tmp_path / attr.lower())
     c = ConsoleLike()
     monitor.install(c)
@@ -202,6 +203,106 @@ def test_on_demand_switch_parks_a_model_without_touching_units(tmp_path, monkeyp
     assert on.json()["on_demand_disabled"] == []
 
 
+def test_schedule_window_route_and_allowed_now(tmp_path, monkeypatch):
+    """POST /api/control/schedule writes the daily window file the door reads,
+    and the catalog marks a model outside its window as not allowed right now
+    (without ever disabling its manual On demand checkbox)."""
+    c, m = make_monitor(tmp_path, monkeypatch)
+
+    async def fake_waitroom():
+        return {"loaded_model": "Text A", "active": None, "inflight": 0, "waiting": []}
+
+    async def fake_registry():
+        return m.registry_models, None
+
+    monkeypatch.setattr(collectors, "registry_models", fake_registry)
+    monkeypatch.setattr(collectors, "waitroom_snapshot", fake_waitroom)
+
+    with TestClient(c.app) as client:
+        assert client.post("/api/control/schedule", json={}).status_code == 400
+        assert client.post("/api/control/schedule",
+                           json={"model": "a", "start": "25:00", "end": "06:00"}).status_code == 400
+        r = client.post("/api/control/schedule",
+                        json={"model": "a", "start": "20:00", "end": "06:00"})
+        assert r.status_code == 200, r.text
+        assert r.json()["model"] == "Text A"
+        assert r.json()["window"] == {"start": "20:00", "end": "06:00"}
+
+    snap = asyncio.run(m.snapshot())
+    row = {x["name"]: x for x in snap["models"]}["Text A"]
+    assert row["schedule"] == {"start": "20:00", "end": "06:00"}
+    # 20:00-06:00 is a tiny slice of the day; whatever the wall clock says,
+    # allowed_now must agree with model_state, and the manual switch stays on.
+    assert row["allowed_now"] == state.schedule_allows("Text A", {"Text A": {"start": "20:00", "end": "06:00"}})
+    assert row["on_demand"] is True, "a window does not touch the manual switch"
+    assert snap["model"]["schedule_windows"]["Text A"]["start"] == "20:00"
+
+    # 00:00-23:59 covers every minute of the day, so allowed_now flips True.
+    with TestClient(c.app) as client:
+        client.post("/api/control/schedule",
+                    json={"model": "Text A", "start": "00:00", "end": "23:59"})
+    row = {x["name"]: x for x in asyncio.run(m.snapshot())["models"]}["Text A"]
+    assert row["allowed_now"] is True
+
+    with TestClient(c.app) as client:
+        r = client.post("/api/control/schedule", json={"model": "Text A"})
+    assert r.json()["window"] is None
+    row = {x["name"]: x for x in asyncio.run(m.snapshot())["models"]}["Text A"]
+    assert row["schedule"] is None and row["allowed_now"] is True
+
+
+def test_token_stats_are_per_model_and_survive_a_model_change(tmp_path, monkeypatch):
+    """The top bar shows the LOADED model's speed; every catalog row carries its
+    own last-seen pair, read back from the stats file so a fresh load starts
+    with the previous session's numbers instead of blanks."""
+    c, m = make_monitor(tmp_path, monkeypatch)
+    stats_file = tmp_path / "model-token-stats.json"
+    monkeypatch.setattr(state, "DEFAULT_TOKEN_STATS_FILE", stats_file)
+
+    calls = {"port": None}
+
+    async def fake_engine_metrics(port, key):
+        calls["port"] = port
+        return {"ok": True, "decode_tps": 66, "prefill_tps": 1500,
+                "source": "engine/metrics", "phase": "generating"}
+
+    async def fake_registry():
+        return m.registry_models, None
+
+    async def fake_waitroom():
+        return {"loaded_model": "Text A", "active": "Text A", "inflight": 1, "waiting": []}
+
+    monkeypatch.setattr(collectors, "registry_models", fake_registry)
+    monkeypatch.setattr(collectors, "waitroom_snapshot", fake_waitroom)
+    monkeypatch.setattr(collectors, "engine_metrics", fake_engine_metrics)
+
+    snap = asyncio.run(m.snapshot())
+    m.history.add(snap)
+    rows = {x["name"]: x for x in snap["models"]}
+    assert rows["Text A"]["decode_tps"] == 66 and rows["Text A"]["prefill_tps"] == 1500
+    # "Media B" has never been loaded: nothing cached yet, so blanks.
+    assert rows["Media B"]["decode_tps"] is None
+    assert stats_file.exists(), "the last-seen speeds are persisted per model"
+
+    # Swap to Media B: Text A's row keeps its own last numbers from the file,
+    # and the engine is now polled on Media B's port.
+    async def fake_waitroom_b():
+        return {"loaded_model": "Media B", "active": "Media B", "inflight": 1, "waiting": []}
+
+    async def fake_engine_metrics_b(port, key):
+        calls["port"] = port
+        return {"ok": True, "decode_tps": 9, "prefill_tps": 120, "source": "engine/metrics"}
+
+    monkeypatch.setattr(collectors, "waitroom_snapshot", fake_waitroom_b)
+    monkeypatch.setattr(collectors, "engine_metrics", fake_engine_metrics_b)
+    snap = asyncio.run(m.snapshot())
+    rows = {x["name"]: x for x in snap["models"]}
+    assert rows["Media B"]["decode_tps"] == 9 and rows["Media B"]["prefill_tps"] == 120
+    assert rows["Text A"]["decode_tps"] == 66, "a parked model keeps its own saved speed"
+    assert rows["Text A"]["prefill_tps"] == 1500
+    assert snap["system"]["decode_tps"] == 9, "the top bar follows the loaded model only"
+
+
 def test_parse_engine_metrics_ds4_schema():
     """DS4 engines report prompt_total + reused instead of prompt_read.
 
@@ -222,7 +323,7 @@ def test_parse_engine_metrics_ds4_schema():
     }
     out = collectors.parse_engine_metrics(payload)
     assert out["ok"] is True
-    assert out["decode_tps"] == 18.5, "last finished request's decode rate"
+    assert out["decode_tps"] == round(18.5), "last finished request's decode rate"
     assert abs(out["prefill_tps"] - 270.8) < 1.0, "(31885-25512)/23.5278 s"
     assert abs(out["cache_hit_rate"] - 0.800) < 0.01, "reused/prompt_total"
     assert out["prompt_total"] == 31885 and out["reused_tokens"] == 25512

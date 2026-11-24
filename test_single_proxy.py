@@ -40,6 +40,7 @@ EXPECTED_ROUTES = {
     "/internal/waitroom/events",
     "/api/control/load", "/api/control/unload", "/api/control/lock",
     "/api/control/unlock", "/api/control/resume_auto", "/api/control/on_demand",
+    "/api/control/schedule",
 }
 
 

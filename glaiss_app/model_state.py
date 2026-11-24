@@ -22,6 +22,7 @@ import json
 import os
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -49,6 +50,12 @@ DEFAULT_SWAP_DESIRED_FILE = Path(
 )
 DEFAULT_ONDEMAND_FILE = Path(
     os.environ.get("MODEL_ONDEMAND_FILE", str(DEFAULT_STATE_DIR / "model-ondemand.json"))
+)
+DEFAULT_SCHEDULE_FILE = Path(
+    os.environ.get("MODEL_SCHEDULE_FILE", str(DEFAULT_STATE_DIR / "model-schedule.json"))
+)
+DEFAULT_TOKEN_STATS_FILE = Path(
+    os.environ.get("MODEL_TOKEN_STATS_FILE", str(DEFAULT_STATE_DIR / "model-token-stats.json"))
 )
 
 DEFAULT_MANUAL_SUPPRESS_S = float(os.environ.get("MANUAL_CONTROL_SUPPRESS_S", "900"))
@@ -202,6 +209,144 @@ def set_model_on_demand(
         "updated_by": by,
     }
     _write_json_atomic(path or DEFAULT_ONDEMAND_FILE, payload)
+    return payload
+
+
+def _parse_hhmm(value: Any) -> Optional[int]:
+    """Parse a 24-hour HH:MM string into minutes after midnight."""
+    try:
+        hour, minute = str(value).strip().split(":")
+        hour, minute = int(hour), int(minute)
+    except Exception:
+        return None
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        return None
+    return hour * 60 + minute
+
+
+def _clock_minutes(now: Optional[Any] = None) -> int:
+    if now is None:
+        dt = datetime.now()
+    elif isinstance(now, datetime):
+        dt = now
+    else:
+        dt = datetime.fromtimestamp(float(now))
+    return dt.hour * 60 + dt.minute
+
+
+def read_schedule(path: Optional[Path] = None) -> Dict[str, Dict[str, str]]:
+    """Daily enabled windows per model, keyed by model name: {start, end} HH:MM."""
+    data = _read_json(path or DEFAULT_SCHEDULE_FILE) or {}
+    windows: Dict[str, Dict[str, str]] = {}
+    for model, window in (data.get("windows") or {}).items():
+        if not isinstance(window, dict):
+            continue
+        start = window.get("start")
+        end = window.get("end")
+        if _parse_hhmm(start) is None or _parse_hhmm(end) is None:
+            continue
+        windows[str(model).strip()] = {"start": str(start).strip(), "end": str(end).strip()}
+    return windows
+
+
+def schedule_allows(
+    model: Optional[str],
+    windows: Optional[Dict[str, Dict[str, str]]] = None,
+    now: Optional[Any] = None,
+) -> bool:
+    """True when `model` is inside its daily enabled window (or has no window)."""
+    if not model:
+        return True
+    windows = windows if windows is not None else read_schedule()
+    target = _normalize_model(model)
+    for key, window in windows.items():
+        if _normalize_model(key) != target:
+            continue
+        start = _parse_hhmm(window.get("start"))
+        end = _parse_hhmm(window.get("end"))
+        if start is None or end is None:
+            return True
+        minute = _clock_minutes(now)
+        if start <= end:
+            return start <= minute < end
+        # Overnight window such as 20:00-06:00.
+        return minute >= start or minute < end
+    return True
+
+
+def set_model_schedule(
+    model: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    *,
+    path: Optional[Path] = None,
+    by: str = "glaiss",
+) -> Dict[str, Any]:
+    """Set or clear a model's daily enabled window. Empty start/end clears it."""
+    if not (model or "").strip():
+        raise ValueError("model required")
+    windows = read_schedule(path)
+    key = next(
+        (k for k in windows if _normalize_model(k) == _normalize_model(model)),
+        model.strip(),
+    )
+    if not start and not end:
+        windows.pop(key, None)
+    else:
+        if _parse_hhmm(start) is None or _parse_hhmm(end) is None:
+            raise ValueError("start and end must be HH:MM")
+        if _parse_hhmm(start) == _parse_hhmm(end):
+            raise ValueError("start and end must differ")
+        windows[key] = {"start": str(start).strip(), "end": str(end).strip()}
+    payload = {
+        "version": 1,
+        "windows": dict(sorted(windows.items(), key=lambda item: item[0].casefold())),
+        "updated_at": _now(),
+        "updated_by": by,
+    }
+    _write_json_atomic(path or DEFAULT_SCHEDULE_FILE, payload)
+    return payload
+
+
+def read_token_stats(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+    """Last observed prefill/decode speeds per model, so a reload can show them."""
+    data = _read_json(path or DEFAULT_TOKEN_STATS_FILE) or {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for model, row in (data.get("models") or {}).items():
+        if not isinstance(row, dict):
+            continue
+        out[str(model).strip()] = {
+            "decode_tps": row.get("decode_tps"),
+            "prefill_tps": row.get("prefill_tps"),
+            "updated_at": row.get("updated_at"),
+        }
+    return out
+
+
+def write_token_stats(
+    model: Optional[str],
+    decode_tps: Optional[float] = None,
+    prefill_tps: Optional[float] = None,
+    *,
+    path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Remember the last non-null speeds for one model."""
+    if not model:
+        return {}
+    data = _read_json(path or DEFAULT_TOKEN_STATS_FILE) or {}
+    raw_models = data.get("models")
+    models = raw_models if isinstance(raw_models, dict) else {}
+    row = models.get(model)
+    if not isinstance(row, dict):
+        row = {}
+    if decode_tps is not None:
+        row["decode_tps"] = float(decode_tps)
+    if prefill_tps is not None:
+        row["prefill_tps"] = float(prefill_tps)
+    row["updated_at"] = _now()
+    models[model] = row
+    payload = {"version": 1, "models": models, "updated_at": _now()}
+    _write_json_atomic(path or DEFAULT_TOKEN_STATS_FILE, payload)
     return payload
 
 

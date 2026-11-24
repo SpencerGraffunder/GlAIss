@@ -46,6 +46,10 @@ read_lastswap = state.read_lastswap
 read_on_demand = state.read_on_demand
 on_demand_blocked = state.on_demand_blocked
 set_model_on_demand = state.set_model_on_demand
+read_schedule = state.read_schedule
+schedule_allows = state.schedule_allows
+set_model_schedule = state.set_model_schedule
+read_token_stats = state.read_token_stats
 
 try:  # the CLI needs collectors; the waitroom does not
     from glaiss_app import collectors as _collectors
@@ -148,6 +152,30 @@ def cmd_on_demand(args):
                 "off_demand": payload["disabled"]})
 
 
+def cmd_schedule(args):
+    """Daily enabled window: the model may auto-load ONLY inside it.
+
+    `--window 20:00-06:00` = evenings/nights only (the window crosses midnight).
+    `--clear` removes the window so the model may load any time again. Outside
+    the window a request naming the model parks in the waitroom queue and runs
+    by itself when the window opens — nothing is loaded or unloaded here.
+    """
+    m = resolve(args.model)
+    start = end = None
+    if not args.clear:
+        if not args.window:
+            fail("pass --window HH:MM-HH:MM or --clear")
+        parts = [s.strip() for s in args.window.split("-")]
+        if len(parts) != 2:
+            fail("window must look like 20:00-06:00")
+        start, end = parts
+    payload = state.set_model_schedule(m["name"], start, end, by="cli")
+    print_json({"ok": True, "model": m["name"],
+                "window": payload["windows"].get(m["name"]),
+                "open_now": state.schedule_allows(m["name"], payload["windows"]),
+                "windows": payload["windows"]})
+
+
 def cmd_load(args):
     m = resolve(args.model)
     lock, _ = require_ready_write()
@@ -225,6 +253,11 @@ def main():
     od.add_argument("--off", action="store_true",
                     help="Park it: a request naming this model waits in the queue instead of loading it (a manual 'load' still works)")
     od.set_defaults(fn=cmd_on_demand)
+    sc = sub.add_parser("schedule")
+    sc.add_argument("model")
+    sc.add_argument("--window", help="Daily enabled window HH:MM-HH:MM local, crosses midnight when start > end (e.g. 20:00-06:00)")
+    sc.add_argument("--clear", action="store_true", help="Remove the window: the model may load any time again")
+    sc.set_defaults(fn=cmd_schedule)
     ld = sub.add_parser("load"); ld.add_argument("model"); ld.add_argument("--force", action="store_true", help="Only for emergency generation tear-down before swap-to"); ld.add_argument("--lock", action="store_true"); ld.add_argument("--dry-run", action="store_true"); ld.set_defaults(fn=cmd_load)
     ul = sub.add_parser("unload"); ul.add_argument("model"); ul.add_argument("--force", action="store_true", help="Ignore waitroom inflight guard; emergency only"); ul.add_argument("--break-lock", action="store_true"); ul.add_argument("--dry-run", action="store_true"); ul.set_defaults(fn=cmd_unload)
     args = p.parse_args()

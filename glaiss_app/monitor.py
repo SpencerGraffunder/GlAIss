@@ -412,6 +412,8 @@ class Monitor:
         lock = state.read_lock()
         manual = state.read_manual()
         on_demand_disabled = state.read_on_demand()["disabled"]
+        schedule_windows = state.read_schedule()
+        token_cache = state.read_token_stats()
         current_loaded_model = waitroom.get("loaded_model") or waitroom.get("active")
         loaded_state = None
         loaded_unit = None
@@ -424,11 +426,14 @@ class Monitor:
         models = []
         for m in self.registry_models:
             name = m.get("name")
+            manual_on = not state.on_demand_blocked(name, on_demand_disabled)
             models.append({
                 **m,
                 "loaded": bool(current_loaded_model and current_loaded_model == name),
                 "locked": bool(lock and state._normalize_model(lock.get("model")) == state._normalize_model(name)),
-                "on_demand": not state.on_demand_blocked(name, on_demand_disabled),
+                "on_demand": manual_on,
+                "allowed_now": manual_on and state.schedule_allows(name, schedule_windows),
+                "schedule": schedule_windows.get(name),
                 "visible_in_picker": not bool(m.get("unlisted")),
             })
 
@@ -446,6 +451,27 @@ class Monitor:
         tps_source = engine.get("source") if engine.get("ok") and (
             decode_tps or prefill_tps) else (
             "history-last" if decode_tps is not None or prefill_tps is not None else None)
+        # Per-model token speeds: the loaded model's live numbers plus the last
+        # numbers seen for every other model, so a fresh load shows the previous
+        # run's speeds instead of blanks. The top bar always shows only the
+        # loaded model; catalog rows show each model's own pair.
+        if current_loaded_model and (decode_tps is not None or prefill_tps is not None):
+            try:
+                state.write_token_stats(current_loaded_model, decode_tps, prefill_tps)
+            except Exception:
+                pass
+        for row in models:
+            name = row.get("name") or ""
+            cached = token_cache.get(name) or {}
+            if name == current_loaded_model:
+                row["decode_tps"] = decode_tps if decode_tps is not None else cached.get("decode_tps")
+                row["prefill_tps"] = prefill_tps if prefill_tps is not None else cached.get("prefill_tps")
+                row["token_speed_source"] = tps_source
+            else:
+                row_decode = self.history.last_non_null("decode_tps", name)
+                row_prefill = self.history.last_non_null("prefill_tps", name)
+                row["decode_tps"] = row_decode if row_decode is not None else cached.get("decode_tps")
+                row["prefill_tps"] = row_prefill if row_prefill is not None else cached.get("prefill_tps")
         gpu_cards = engine.get("gpu_cards") or C.nvidia_gpu_cards(gpus)
         pcie_rx_mb = engine.get("pcie_rx_mb")
         pcie_tx_mb = engine.get("pcie_tx_mb")
@@ -471,10 +497,14 @@ class Monitor:
                 "lock": lock,
                 "manual_control": manual,
                 "on_demand_disabled": on_demand_disabled,
+                "schedule_windows": schedule_windows,
                 "model_control_state_files": {
                     "lock": str(state.DEFAULT_LOCK_FILE),
                     "manual": str(state.DEFAULT_MANUAL_FILE),
                     "last_swap": str(state.DEFAULT_LASTSWAP_FILE),
+                    "on_demand": str(state.DEFAULT_ONDEMAND_FILE),
+                    "schedule": str(state.DEFAULT_SCHEDULE_FILE),
+                    "token_stats": str(state.DEFAULT_TOKEN_STATS_FILE),
                 },
             },
             "models": models,
@@ -694,6 +724,34 @@ def install(app_module) -> None:
                             "disabled": payload["disabled"], "ts": time.time()})
         return JSONResponse({"ok": True, "model": name, "enabled": enabled,
                              "on_demand_disabled": payload["disabled"]})
+
+    @router.post("/api/control/schedule")
+    async def control_schedule(request: Request):
+        """Set or clear a model's daily enabled window (HH:MM, local time).
+
+        Outside the window the model behaves exactly like an off-demand model:
+        a request naming it parks in the queue, and the door's 2s re-pump admits
+        it the moment the window opens. No window = always enabled (subject to
+        the manual on-demand switch)."""
+        data = await request.json()
+        model = data.get("model")
+        if not model:
+            return JSONResponse({"error": {"message": "model is required"}}, status_code=400)
+        target = C.resolve_registry_model(monitor.registry_models, model) or {}
+        name = target.get("name") or model
+        start = (data.get("start") or "").strip() or None
+        end = (data.get("end") or "").strip() or None
+        try:
+            payload = state.set_model_schedule(name, start, end, by="glaiss")
+        except ValueError as exc:
+            return JSONResponse({"error": {"message": str(exc)}}, status_code=400)
+        window = payload["windows"].get(name)
+        hub = monitor.hub()
+        if hub:
+            await hub.emit({"type": "model_schedule", "model": name, "window": window,
+                            "windows": payload["windows"], "ts": time.time()})
+        return JSONResponse({"ok": True, "model": name, "window": window,
+                             "schedule_windows": payload["windows"]})
 
     before = list(app.router.routes)
     app.include_router(router)

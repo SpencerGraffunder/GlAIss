@@ -191,8 +191,8 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
 
     out.update({
         "ok": True, "error": None,
-        "decode_tps": round(float(decode), 1) if decode else None,
-        "prefill_tps": round(float(prefill), 1) if prefill else None,
+        "decode_tps": round(float(decode), 0) if decode else None,
+        "prefill_tps": round(float(prefill), 0) if prefill else None,
         "phase": live.get("phase") or live.get("state"),
         "prompt_tokens": live.get("prompt_tokens"),
         "prompt_read": newly_read,
