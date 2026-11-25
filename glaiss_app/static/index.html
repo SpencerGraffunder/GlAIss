@@ -16,7 +16,6 @@
   button{font:inherit} input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;margin:0}
   #topbar{border-bottom:1px solid var(--border);background:var(--panel);padding:9px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
   #brand{font-weight:800;letter-spacing:1px;color:var(--accent)} #brand small{color:var(--dim);font-weight:400;margin-left:7px}
-  #live-state{margin-left:auto;color:var(--accent);font-weight:700;white-space:nowrap;padding:3px 10px;border:1px solid var(--border);border-radius:999px;align-self:center}
   /* Only shown when something is actually broken; when healthy the row is empty. */
   #offline{display:none;align-items:center;gap:6px;border:1px solid #753137;background:#3d1d22;color:#ffb8ba;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700}
   #offline.show{display:inline-flex}
@@ -32,10 +31,10 @@
   #queue-strip{border-bottom:1px solid var(--border);background:var(--panel2);padding:8px 14px;display:flex;align-items:center;gap:12px;overflow-x:auto;overflow-y:hidden;min-height:54px}
   .qs-title{color:var(--dim);font:10px var(--mono);text-transform:uppercase;letter-spacing:1px;flex:0 0 auto;cursor:help}
   .qboxes{display:flex;gap:9px;flex-wrap:nowrap;min-width:0}.qbox{flex:0 0 auto;min-width:180px;border:1px solid var(--border);background:#1b2027;border-radius:5px;padding:7px 9px}
-  .qbox.running{border-color:var(--accent)}.qbox.queued{border-style:dashed;opacity:.9}.qbox.done{opacity:.6;border-color:#2f3a44}.qbox.blocked{border-color:var(--warn);opacity:.75}
+  .qbox.running{border-color:var(--accent)}.qbox.queued{border-color:rgba(66,211,163,.38);background:#182019}.qbox.done{opacity:.6;border-color:#2f3a44}.qbox.blocked{border-color:var(--warn);opacity:.75}
   .qbox .a{display:flex;justify-content:space-between;gap:8px;align-items:center}.qbox .m{font-size:11px;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;margin-top:5px}.qbox b{color:var(--text)}
+  .qbox .live{color:var(--accent);font-weight:700}
   #queue-hint{color:var(--dim);font-size:11px;font-style:italic}
-  #last-event{margin-left:auto;color:var(--dim);font-size:11px;white-space:nowrap;flex:0 0 auto}
   #ops{flex:1 1 auto;min-height:260px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;background:#0d1014}
   /* Wraps rather than scrolls: the action chips and buttons must never be
      reachable only by a hidden sideways scroll inside this bar (that is what
@@ -84,7 +83,6 @@
     #queue-strip{padding:8px 10px}
     #ops-tabs{padding:6px 8px 2px}
     #ops-actions{margin-left:0;width:100%;padding:3px 0 6px;justify-content:flex-start}
-    #last-event{display:none}
     .ops-body{padding:8px}
     #ops-actions{margin-left:0;width:100%;padding-top:2px}
     .panel{overflow-x:auto}
@@ -99,20 +97,18 @@
   <div id="offline"><span class="dot"></span><span id="offline-text">disconnected</span></div>
   <div class="stats">
     <div class="stat"><div class="label">loaded model</div><div class="value v-blue" id="stat-loaded">—</div></div>
-    <div class="stat"><div class="label" title="Requests the door is holding: generating now plus queued behind them. The model name is not repeated here — the loaded-model tile already says it.">queue length</div><div class="value v-accent" id="stat-busy">0</div></div>
-    <div class="stat"><div class="label">waiting</div><div class="value" id="stat-wait">0</div></div>
+    <div class="stat"><div class="label" title="Requests the engine is working on or streaming right now.">generating</div><div class="value v-accent" id="stat-busy">0</div></div>
+    <div class="stat"><div class="label" title="Requests the door is holding back from the engine — queued behind the running batch, parked for a disabled model, or outside its window.">waiting</div><div class="value" id="stat-wait">0</div></div>
     <div class="stat"><div class="label">system</div><div class="value" id="stat-power">—</div></div>
     <div class="stat"><div class="label">RAM</div><div class="value" id="stat-ram">—</div></div>
     <div class="stat"><div class="label">VRAM</div><div class="value" id="stat-vram">—</div></div>
   </div>
-  <div id="live-state" class="small" hidden></div>
 </header>
 
 <section id="queue-strip">
   <div class="qs-title" id="queue-title">waitroom queue</div>
   <div class="qboxes" id="queue-boxes"></div>
   <span id="queue-hint">nothing generating or queued</span>
-  <span id="last-event"></span>
 </section>
 
 <main id="ops">
@@ -168,6 +164,9 @@ const $ = x => document.getElementById(String(x).replace(/^#/, ''));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (x,suf='') => x==null ? '—' : (Number.isFinite(+x) ? Math.round(+x) : x)+suf;
 const bytes = x => { if(x==null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let n=+x,i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return Math.round(n)+' '+u[i]; };
+// "120/128 GB" style — Spec asked for usage as used/total on the RAM and VRAM tiles.
+const fracGB = (u, t) => { if(u==null) return '—'; const G=1073741824, tt=+t;
+  return tt > 0 ? `${fmt(u/G)}/${fmt(tt/G)} GB` : bytes(u); };
 // Prompt token counts: whole numbers with thousands separators ("18,240").
 const tok = x => x==null ? null : Math.round(+x).toLocaleString('en-US');
 
@@ -237,11 +236,40 @@ function activityBoxes(m) {
     const reqs = Array.isArray(m.inflight_requests) && m.inflight_requests.length
       ? m.inflight_requests
       : Array.from({length: m.inflight || 0}, () => ({model: m.active, req_id: null}));
+    // Per-card live status (Spec 2026-11-25): the engine reports prefill
+    // progress / generated count for the request it is CURRENTLY working on.
+    // These engines serve strictly one at a time in arrival order (FIFO), so
+    // that is the OLDEST running card on the loaded model — even when further
+    // requests are already admitted and queued behind it at the engine. Those
+    // younger cards honestly stay "in flight": the engine cannot attribute its
+    // numbers to any card but the active one.
+    let target = -1;
+    if (s.engine_live_state === 'reading' || s.engine_live_state === 'generating') {
+      let bestAge = -1;
+      reqs.forEach((r, i) => {
+        if ((r.model || m.active) !== loaded) return;
+        const age = +r.since_s || 0;
+        if (target < 0 || age > bestAge) { target = i; bestAge = age; }
+      });
+    }
     reqs.forEach((r, i) => {
+      let status = 'in flight', liveTitle = '';
+      if (i === target) {
+        if (s.engine_live_state === 'reading') {
+          const rd = +s.engine_live_prompt_read || 0, tot = +s.engine_live_prompt_total || 0;
+          status = tot > 0 ? `processing prompt · ${Math.min(100, Math.round(100 * rd / tot))}%` : 'processing prompt';
+          liveTitle = 'How much of the prompt the engine has read — it updates as it goes.';
+        } else if (s.engine_live_state === 'generating') {
+          status = s.engine_live_generated == null ? 'generating'
+            : `generating · ${tok(Math.round(+s.engine_live_generated))} tokens`;
+          liveTitle = s.engine_live_max_tokens ? `max ${tok(Math.round(+s.engine_live_max_tokens))} tokens` : '';
+        }
+      }
       const b = document.createElement('div'); b.className='qbox running';
-      b.innerHTML=`<div class="a"><b>${esc(r.model || m.active)}</b><span class="small">in flight</span></div>`
+      b.innerHTML=`<div class="a"><b>${esc(r.model || m.active)}</b><span class="small live" title="${esc(liveTitle)}">${esc(status)}</span></div>`
         +`<div class="m"><span>request <b>${i+1}</b>${r.req_id!=null?` · id ${esc(r.req_id)}`:''}</span>`
-        +(r.since_s!=null?`<span>for <b>${fmt(r.since_s,'s')}</b></span>`:'')
+        +(r.waited_s!=null?`<span title="Time this request sat in the door queue before the engine picked it up">waited <b>${fmt(r.waited_s,'s')}</b></span>`:'')
+        +(r.since_s!=null?`<span title="Time since the engine picked it up (prompt processing + generation)">running <b>${fmt(r.since_s,'s')}</b></span>`:'')
         +promptSpan(r.model || m.active, r.prompt_tokens_est)
         +`</div>`;
       boxes.push(b);
@@ -303,31 +331,18 @@ function renderMonitor(d) {
   state.data=d; const s=d.system||{}, m=d.model||{}, col=d.collectors||{};
   state.doorOk = !!col.waitroom?.ok;
   $('stat-loaded').textContent=m.current_loaded_model||m.loaded_model||'none';
-  // "queue length" = everything the door is holding (in flight + waiting). The
-  // model name deliberately is NOT repeated here — the loaded-model tile
-  // already shows it and the queue strip shows one box per request.
-  $('stat-busy').textContent=(m.inflight||0)+((m.waiting||[]).length);
+  // Two DISTINCT tiles (Spec 2026-11-25: the old summing tile and "waiting"
+  // looked redundant because one contained the other): generating = what the
+  // engine is working on/streaming now; waiting = what the door holds back.
+  $('stat-busy').textContent=m.inflight||0;
   $('stat-busy').className='value '+((m.inflight||0)>0?'v-accent':'');
   $('stat-wait').textContent=(m.waiting||[]).length;
-  // Top-right live status pill: prefill progress while the engine reads the
-  // prompt, generated-token count while it streams. The engine reports both in
-  // its /metrics live block, so this updates every poll as the work advances.
-  const lst = String(s.engine_live_state || '');
-  const liveEl = $('live-state');
-  let liveTxt = '';
-  if (lst === 'reading') {
-    const rd = +s.engine_live_prompt_read || 0, tot = +s.engine_live_prompt_total || 0;
-    liveTxt = tot > 0 ? `processing prompt · ${Math.min(100, Math.round(100 * rd / tot))}%` : 'processing prompt';
-  } else if (lst === 'generating') {
-    liveTxt = s.engine_live_generated == null ? 'generating' : `generating · ${tok(Math.round(+s.engine_live_generated))} tokens`;
-  }
-  liveEl.textContent = liveTxt;
-  liveEl.hidden = !liveTxt;
-  liveEl.title = lst === 'generating' && s.engine_live_max_tokens ? `max ${tok(Math.round(+s.engine_live_max_tokens))} tokens` : '';
   // Kept for the Metrics tab's "tps now" readout (the top-bar tiles are gone).
   if (s.prefill_tps != null) state.lastPrefill = s.prefill_tps;
   if (s.decode_tps != null) state.lastDecode = s.decode_tps;
-  $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W'); $('stat-ram').textContent=bytes(s.ram_used_bytes); $('stat-vram').textContent=bytes((s.vram_used_mib||0)*1048576);
+  $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W');
+  $('stat-ram').textContent=fracGB(s.ram_used_bytes, s.ram_total_bytes);
+  $('stat-vram').textContent=fracGB((s.vram_used_mib||0)*1048576, (s.vram_total_mib||0)*1048576);
   renderQueue(m);
   renderGpuCards(d); renderTraffic(d); renderComfy(d); renderStt(d);
   // Jobs first: a running load/unload job must be in state.jobs before the
@@ -625,7 +640,7 @@ function connectWS(){ const p=location.protocol==='https:'?'wss':'ws'; const ws=
   ws.onmessage=e=>{ const m=JSON.parse(e.data);
     if(m.type==='monitor'){ if(state.data) renderMonitor(Object.assign({},state.data,m)); }
     else if(m.type==='control_job'){ renderJobs([m.job,...state.jobs.filter(x=>x.id!==m.job.id)]); poll(); }
-    else if(m.type==='waitroom_event'){ const ev=m.event||{}; $('last-event').textContent=`door: ${ev.type||'?'} ${ev.model||''}`.trim(); if(state.activeTab==='logs') pollLogs(); }
+    else if(m.type==='waitroom_event'){ if(state.activeTab==='logs') pollLogs(); }
   };
 }
 connectWS(); poll(); pollLogs();

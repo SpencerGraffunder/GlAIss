@@ -948,6 +948,9 @@ async def t_prompt_estimate_travels_with_queue_entries():
            "prompt size: parked request carries its estimate into /state waiting")
         ck(snap["inflight_requests"][0]["prompt_tokens_est"] is None,
            "prompt size: a request without a measurable prompt shows no estimate")
+        w0 = snap["inflight_requests"][0]["waited_s"]
+        ck(w0 is not None and w0 < 1.0,
+           "card timers: an admitted request reports its queue wait (near-zero here)")
     finally:
         task.cancel()
         try:

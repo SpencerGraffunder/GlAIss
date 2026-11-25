@@ -18,7 +18,7 @@ STATIC = Path(__file__).resolve().parent / "glaiss_app" / "static" / "index.html
 # Chrome that used to sit in the header and said nothing useful (Spec 2026-11-21).
 BANNED_IDS = ("stat-live", "stat-monitor", "stat-door", "stat-active",
               "ws-dot", "monitor-dot", "job-status", "waitroom-lane",
-              "stat-pp", "stat-decode")
+              "stat-pp", "stat-decode", "last-event", "live-state")
 BANNED_WORDS = ("arbiter", "/api/cancel", "/api/config", "provider_host",
                 "prompt-body", "response-body", "openResponses", "stat-proxy")
 
@@ -118,10 +118,11 @@ def test_redundant_tiles_and_queue_jargon_are_gone():
     for cid in ("stat-hold", "stat-reqs"):
         assert f'id="{cid}"' not in html, f"{cid} must not be in the page"
     assert "llpc waitroom console" not in html, "the brand line is just GLAISS"
-    assert ">generating<" not in html, "the top bar tile is 'queue length' now"
-    assert 'title="Requests the door is holding' in html and "queue length" in html
+    assert ">waiting<" in html and ">generating<" in html, \
+        "the top bar shows generating and waiting as two DISTINCT tiles (Spec 2026-11-25)"
+    assert "queue length" not in html, "the containment-based 'queue length' tile is gone"
     busy_line = next((l for l in js.splitlines() if "$('stat-busy').textContent" in l), "")
-    assert "m.active" not in busy_line, "the queue-length tile must not echo the model name"
+    assert "m.active" not in busy_line, "the generating tile must not echo the model name"
     assert "quantum" not in js.split("function activityBoxes")[1].split("function renderQueue")[0], \
         "queue boxes are one box per request, not quantum counters"
     assert "handoffs" not in js.split("function activityBoxes")[1].split("function renderQueue")[0]
@@ -204,18 +205,35 @@ def test_model_rows_carry_their_own_speed_and_window():
     assert "Window" in html, "the catalog has a schedule column"
 
 
-def test_top_bar_shows_live_prompt_progress_then_generation_count():
-    """Spec 2026-11-25: while the engine reads the prompt the top-right shows
-    'processing prompt · x%' ticking upward; while it generates, 'generating ·
-    x tokens'. Both come from the engine's live block, so they update per poll."""
+def test_running_card_shows_live_prompt_progress_then_generation_count():
+    """Spec 2026-11-25 (clarified): the live readout lives in the TOP-RIGHT OF
+    THE REQUEST CARD, not the window — 'processing prompt · x%' while the engine
+    reads the prompt, 'generating · x tokens' while it streams. Cards also carry
+    separate waited/running timers, and a queued card wears a dimmed green
+    outline while the active card keeps the accent one."""
     html, js = _html_and_js()
-    assert "id=\"live-state\"" in html, "the top bar has a live status pill"
-    assert "engine_live_state" in js and "engine_live_prompt_read" in js \
-        and "engine_live_prompt_total" in js and "engine_live_generated" in js, \
-        "the pill reads the engine's live progress fields"
-    assert "processing prompt ·" in js, "prefill shows a live percentage"
-    assert "Math.round(100 * rd / tot)" in js, "the percentage ticks as the prompt is read"
-    assert "generating ·" in js and " tokens" in js, "generation shows the token count"
+    block = js.split("function activityBoxes")[1].split("function renderQueue")[0]
+    assert "processing prompt ·" in block and "generating ·" in block, \
+        "the card status shows prefill percent, then the generated token count"
+    assert "engine_live_prompt_read" in block and "engine_live_prompt_total" in block \
+        and "engine_live_generated" in block, "the engine live block drives the card"
+    assert "engine_live_state" in block and "target" in block, \
+        "the live numbers attach to the OLDEST running card — the engines serve " \
+        "one request at a time in arrival order, younger cards stay 'in flight'"
+    assert "waited <b>" in block and "running <b>" in block, \
+        "each card separates queue wait from processing/generating time"
+    assert 'class="small live"' in block, "the status sits in the card's top-right corner"
+    assert "rgba(66,211,163,.38)" in html, "queued cards get the dimmed green outline"
+    waiting_block = js.split("(m?.waiting||[]).forEach")[1].split("});")[0]
+    assert "waited <b>" in waiting_block, "waiting cards tick their wait counter"
+
+
+def test_ram_and_vram_tiles_show_used_over_total():
+    """Spec 2026-11-25: RAM and VRAM read like '120/128 GB' and '37/40 GB'."""
+    html, js = _html_and_js()
+    assert "fracGB" in js and "const fracGB" in js
+    assert "fracGB(s.ram_used_bytes, s.ram_total_bytes)" in js
+    assert "fracGB((s.vram_used_mib||0)*1048576, (s.vram_total_mib||0)*1048576)" in js
 
 
 def test_honest_state_words_no_parked_and_loaded_together():

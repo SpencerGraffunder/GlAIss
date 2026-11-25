@@ -653,6 +653,10 @@ class Arbiter:
             "inflight": self.inflight,
             "inflight_requests": [{"req_id": e["seq"], "model": e["model"],
                                    "since_s": round(now - e.get("admitted_at", e["at"]), 1),
+                                   # How long this request sat in the queue before
+                                   # admission, so its card can show both phases.
+                                   "waited_s": (round(e["admitted_at"] - e["at"], 1)
+                                                if e.get("admitted_at") else None),
                                    "prompt_tokens_est": e.get("ptok")}
                                   for e in self._active],
             "quantum_left_s": left,
