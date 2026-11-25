@@ -194,6 +194,17 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
         "decode_tps": round(float(decode), 0) if decode else None,
         "prefill_tps": round(float(prefill), 0) if prefill else None,
         "phase": live.get("phase") or live.get("state"),
+        "live_state": live.get("state"),
+        # Prompt-progress heartbeat: while state == "reading" the engine reports
+        # (read, total) for the prompt it is working through; while generating it
+        # reports how many tokens it has produced. The top bar shows these live.
+        "live_prompt_read": live.get("prompt_read"),
+        "live_prompt_total": live.get("prompt_total"),
+        "live_generated": live.get("generated"),
+        "live_max_tokens": live.get("max_tokens"),
+        # Lifetime counters of this engine process — the monitor folds deltas of
+        # these into the console's per-model all-time averages.
+        "totals": payload.get("totals") if isinstance(payload.get("totals"), dict) else None,
         "prompt_tokens": live.get("prompt_tokens"),
         "prompt_read": newly_read,
         "prompt_total": prompt_total,

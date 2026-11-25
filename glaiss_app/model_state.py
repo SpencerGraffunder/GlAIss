@@ -309,45 +309,138 @@ def set_model_schedule(
 
 
 def read_token_stats(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
-    """Last observed prefill/decode speeds per model, so a reload can show them."""
+    """All-time average speeds per model, accumulated by fold_engine_totals.
+
+    avg_* are computed from lifetime token/time sums (survive engine restarts
+    and console restarts); decode_tps/prefill_tps are the last observed live
+    pair, kept for charts and tooltips.
+    """
     data = _read_json(path or DEFAULT_TOKEN_STATS_FILE) or {}
     out: Dict[str, Dict[str, Any]] = {}
     for model, row in (data.get("models") or {}).items():
         if not isinstance(row, dict):
             continue
-        out[str(model).strip()] = {
-            "decode_tps": row.get("decode_tps"),
-            "prefill_tps": row.get("prefill_tps"),
+        cum = row.get("cum")
+        if not isinstance(cum, dict):
+            cum = {}
+        last = row.get("last")
+        if not isinstance(last, dict):
+            last = {}
+        # v1 rows stored only the last-observed pair; surface them as `last`
+        # until the next fold upgrades the row in place.
+        if not last and (row.get("decode_tps") is not None or row.get("prefill_tps") is not None):
+            last = {"decode_tps": row.get("decode_tps"), "prefill_tps": row.get("prefill_tps")}
+        entry = {
+            "decode_tps": last.get("decode_tps"),
+            "prefill_tps": last.get("prefill_tps"),
+            "requests": cum.get("requests"),
             "updated_at": row.get("updated_at"),
         }
+        entry.update(_averages(cum))
+        out[str(model).strip()] = entry
     return out
 
 
-def write_token_stats(
+def _averages(cum: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    """All-time means from cumulative sums: tokens per second over all measured
+    time. prefill counts only the tokens actually read (cache-reused tokens
+    never enter prompt_ms, so this is the recompute rate the engine itself
+    reports); decode counts generated tokens over decode time."""
+    def mean(tokens: Any, ms: Any) -> Optional[float]:
+        try:
+            t, m = float(tokens), float(ms)
+        except (TypeError, ValueError):
+            return None
+        return t / (m / 1000.0) if m > 0 and t >= 0 else None
+    return {
+        "avg_decode_tps": mean(cum.get("out_tokens"), cum.get("decode_ms")),
+        "avg_prefill_tps": mean(cum.get("prompt_read"), cum.get("prompt_ms")),
+    }
+
+
+# Totals the engine counts for its whole process (both engine kinds use these
+# names; "since" is the process start and identifies the run).
+_TOTAL_COUNTERS = ("requests", "prompt_tokens", "reused", "output_tokens", "prompt_ms", "decode_ms")
+
+
+def fold_engine_totals(
     model: Optional[str],
-    decode_tps: Optional[float] = None,
-    prefill_tps: Optional[float] = None,
+    totals: Optional[Dict[str, Any]],
+    live_pair: Optional[Dict[str, Any]] = None,
     *,
     path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Remember the last non-null speeds for one model."""
-    if not model:
+    """Fold the engine's lifetime counters into the model's all-time sums.
+
+    Called every poll with the loaded engine's /metrics `totals`. We store the
+    last raw snapshot per engine run (`engine`, keyed by its `since` stamp) and
+    add only the delta since the previous poll, so the sums grow once per token
+    no matter how often we poll. A different `since`, a counter that went
+    backwards, or no stored snapshot means this engine run has never been
+    folded: the whole run counts as the baseline (this is how a model already
+    serving for days gets a meaningful average the first time we look). The
+    few seconds of a crashed engine's output between the last fold and its
+    death are lost by design; the reset button zeroes a model's sums.
+    """
+    if not model or not isinstance(totals, dict) or totals.get("requests") is None:
         return {}
+
+    def num(v: Any) -> float:
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
+
+    t = {k: num(totals.get(k)) for k in _TOTAL_COUNTERS}
+    since = totals.get("since")
     data = _read_json(path or DEFAULT_TOKEN_STATS_FILE) or {}
     raw_models = data.get("models")
     models = raw_models if isinstance(raw_models, dict) else {}
     row = models.get(model)
     if not isinstance(row, dict):
         row = {}
-    if decode_tps is not None:
-        row["decode_tps"] = float(decode_tps)
-    if prefill_tps is not None:
-        row["prefill_tps"] = float(prefill_tps)
+    prev = row.get("engine")
+    if not isinstance(prev, dict):
+        prev = None
+    same_run = bool(prev) and prev.get("since") == since and not any(t[k] < num(prev.get(k)) for k in _TOTAL_COUNTERS)
+    if same_run and prev is not None:
+        delta = {k: t[k] - num(prev.get(k)) for k in _TOTAL_COUNTERS}
+    else:
+        delta = dict(t)  # first sight of this engine run: take its whole lifetime
+    cum = row.get("cum")
+    if not isinstance(cum, dict):
+        cum = {}
+    cum["requests"] = num(cum.get("requests")) + delta["requests"]
+    cum["prompt_read"] = num(cum.get("prompt_read")) + max(0.0, delta["prompt_tokens"] - delta["reused"])
+    cum["prompt_ms"] = num(cum.get("prompt_ms")) + max(0.0, delta["prompt_ms"])
+    cum["out_tokens"] = num(cum.get("out_tokens")) + max(0.0, delta["output_tokens"])
+    cum["decode_ms"] = num(cum.get("decode_ms")) + max(0.0, delta["decode_ms"])
+    row["cum"] = cum
+    row["engine"] = {"since": since, **t}
+    if live_pair:
+        last = row.get("last")
+        if not isinstance(last, dict):
+            last = {}
+        for key in ("decode_tps", "prefill_tps"):
+            if live_pair.get(key) is not None:
+                last[key] = float(live_pair[key])
+        row["last"] = last
     row["updated_at"] = _now()
     models[model] = row
-    payload = {"version": 1, "models": models, "updated_at": _now()}
+    payload = {"version": 2, "models": models, "updated_at": _now()}
     _write_json_atomic(path or DEFAULT_TOKEN_STATS_FILE, payload)
     return payload
+
+
+def reset_model_stats(model: Optional[str], *, path: Optional[Path] = None) -> bool:
+    """Forget a model's all-time sums and last speeds (the Models-tab reset button)."""
+    if not model:
+        return False
+    data = _read_json(path or DEFAULT_TOKEN_STATS_FILE) or {}
+    raw_models = data.get("models")
+    models = raw_models if isinstance(raw_models, dict) else {}
+    if model not in models:
+        return False
+    del models[model]
+    _write_json_atomic(path or DEFAULT_TOKEN_STATS_FILE, {"version": 2, "models": models, "updated_at": _now()})
+    return True
 
 
 def is_backstop_suppressed(

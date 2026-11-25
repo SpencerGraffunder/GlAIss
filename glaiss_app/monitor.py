@@ -464,14 +464,24 @@ class Monitor:
         # numbers seen for every other model, so a fresh load shows the previous
         # run's speeds instead of blanks. The top bar always shows only the
         # loaded model; catalog rows show each model's own pair.
-        if current_loaded_model and (decode_tps is not None or prefill_tps is not None):
+        # All-time per-model speeds: fold the loaded engine's lifetime counters
+        # into the console's persisted per-model sums, once per token per poll.
+        if current_loaded_model and engine.get("ok"):
             try:
-                state.write_token_stats(current_loaded_model, decode_tps, prefill_tps)
+                state.fold_engine_totals(
+                    current_loaded_model, engine.get("totals"),
+                    {"decode_tps": engine.get("decode_tps"), "prefill_tps": engine.get("prefill_tps")})
             except Exception:
                 pass
+            # The cache above was read BEFORE this fold — reload so the loaded
+            # row's averages reflect this poll, not the previous one.
+            token_cache = state.read_token_stats()
         for row in models:
             name = row.get("name") or ""
             cached = token_cache.get(name) or {}
+            row["avg_decode_tps"] = cached.get("avg_decode_tps")
+            row["avg_prefill_tps"] = cached.get("avg_prefill_tps")
+            row["stats_requests"] = cached.get("requests")
             if name == current_loaded_model:
                 row["decode_tps"] = decode_tps if decode_tps is not None else cached.get("decode_tps")
                 row["prefill_tps"] = prefill_tps if prefill_tps is not None else cached.get("prefill_tps")
@@ -543,6 +553,14 @@ class Monitor:
                 "engine_prompt_total": eng_total,
                 "engine_prompt_read": eng_read,
                 "engine_reused_tokens": eng_reused,
+                # Live prefill progress for the top bar: while state ==
+                # "reading", prompt_read/prompt_total tick toward 100%; while
+                # "generating", generated counts the tokens streamed out.
+                "engine_live_state": engine.get("live_state"),
+                "engine_live_prompt_read": engine.get("live_prompt_read"),
+                "engine_live_prompt_total": engine.get("live_prompt_total"),
+                "engine_live_generated": engine.get("live_generated"),
+                "engine_live_max_tokens": engine.get("live_max_tokens"),
                 "engine_cache_hit_rate": engine.get("cache_hit_rate"),
                 "engine_requests": engine.get("lifetime_requests"),
                 "gpu_cards": gpu_cards,
@@ -736,6 +754,21 @@ def install(app_module) -> None:
                             "disabled": payload["disabled"], "ts": time.time()})
         return JSONResponse({"ok": True, "model": name, "enabled": enabled,
                              "on_demand_disabled": payload["disabled"]})
+
+    @router.post("/api/control/reset_stats")
+    async def control_reset_stats(request: Request):
+        """Forget a model's persisted all-time speed averages (Models-tab reset)."""
+        data = await request.json()
+        model = data.get("model")
+        if not model:
+            return JSONResponse({"error": {"message": "model is required"}}, status_code=400)
+        target = C.resolve_registry_model(monitor.registry_models, model) or {}
+        name = target.get("name") or model
+        removed = state.reset_model_stats(name)
+        hub = monitor.hub()
+        if hub:
+            await hub.emit({"type": "model_stats_reset", "model": name, "ts": time.time()})
+        return JSONResponse({"ok": True, "model": name, "reset": removed})
 
     @router.post("/api/control/schedule")
     async def control_schedule(request: Request):

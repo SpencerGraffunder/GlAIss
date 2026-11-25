@@ -19,11 +19,15 @@ trusted VPN network (in practice: Cloudflare Access on
 
 - llpc waitroom state: loaded model, what is generating right now, one queue box
   per in-flight request (each with a prompt-size stat: the engine's measured
-  total / cached / to-process numbers while it runs, or a ~chars/4 estimate while
+  total + to-process numbers while it runs, or a ~chars/4 estimate while
   it waits), ordered waiting models, swap hysteresis, Comfy claim, intent, manual
   lock, manual-control suppression, and which models are switched off for
   on-demand loading. Door internals (quantum timer, handoffs) stay in `/state`
   for the API but are off the page.
+- **Top-right live status pill** (2026-11-25): while the engine reads a prompt it
+  shows `processing prompt · x%` from the engine's live progress counters
+  (`live.prompt_read / live.prompt_total`), then `generating · x tokens` while it
+  streams (`live.generated`); hidden whenever the engine is idle or unloaded.
 - **On-demand model switch (the Models tab checkbox).** Off means the door will
   not load that model by itself: a request naming it parks in the queue until
   you switch it back on or load it by hand, while requests behind it for an
@@ -35,18 +39,27 @@ trusted VPN network (in practice: Cloudflare Access on
   request waits as its own queue entry. Other models keep the arbiter's batch
   behavior.
 - Token speed measured **by the engine** (`GET /metrics` on the loaded model's
-  port): decode t/s, prefill recompute rate, KV-cache reuse, engine phase. The
-  console cannot measure traffic it does not carry, so there is no proxy-side
-  estimate any more. Two engine schemas exist and both are parsed:
+  port). The console cannot measure traffic it does not carry, so there is no
+  proxy-side estimate any more. Two engine schemas exist and both are parsed:
   Strata reports per-request `decode_tok_s` plus `prompt_read`/`prompt_ms`;
   the DS4 engine (DeepSeek V4.1) reports `prompt_total` + `reused` and a null
   `hit_rate`, so prefill is `(prompt_total - reused) / prompt_ms` and KV reuse is
   `reused / prompt_total`. A live `tok_s` from the engine's `live` block wins over
   the last finished request's average while it is generating. The Metrics chart
   plots decode and prefill on the same canvas: decode axis and label on the left,
-  prefill axis and label on the right, each with its own scale. The tiles keep the
-  most recent prefill/decode value (history fallback) when a metric fetch is
-  momentarily empty instead of blanking.
+  prefill axis and label on the right, each with its own scale.
+- **All-time average speed per model (2026-11-25).** Every poll folds the loaded
+  engine's lifetime counters (`totals`: requests, prompt_tokens, reused,
+  output_tokens, prompt_ms, decode_ms) into persisted per-model sums in
+  `~/.llama-swap/model-token-stats.json` (v2) — only the DELTA since the last
+  poll is added, and a new engine run (its `since` stamp changes) contributes
+  its whole lifetime the first time the console sees it. The Models tab shows
+  `avg dec · avg pp` for **every model, loaded or not**, so a parked DeepSeek
+  keeps showing its numbers once it has been measured at least once (a model
+  the console never watched load shows a dash until its first load). The
+  per-model `reset` button (POST `/api/control/reset_stats`) forgets a model's
+  sums. The old top-bar prefill/decode tiles were removed with this change —
+  live rates read from the pill, the Models tab, or the Metrics chart.
 - Per-service rows matching the standard llpc journal command:
 
   `journalctl -u strata31 -u llama-qwen -u comfy-ui -u llama-swap -u whisper-server -u whisper-shim -u model-waitroom -u strata-dsv41.service -u llama-server`
@@ -201,6 +214,8 @@ The console's entire HTTP surface — anything else is a 404:
   Outside the window the model behaves like an off-demand model: a request
   naming it parks in the door queue and runs on its own when the window opens.
   `{"model": "..."}` with no start/end clears the window
+- `POST /api/control/reset_stats` — `{"model": "..."}`; forgets that model's
+  persisted all-time average speeds (the Models-tab `reset` button).
 
 `/api/state` is the single read endpoint the page uses; the old slice aliases
 (`/api/model`, `/api/services`, `/api/system`, `/api/control/jobs`) and the

@@ -17,7 +17,8 @@ STATIC = Path(__file__).resolve().parent / "glaiss_app" / "static" / "index.html
 
 # Chrome that used to sit in the header and said nothing useful (Spec 2026-11-21).
 BANNED_IDS = ("stat-live", "stat-monitor", "stat-door", "stat-active",
-              "ws-dot", "monitor-dot", "job-status", "waitroom-lane")
+              "ws-dot", "monitor-dot", "job-status", "waitroom-lane",
+              "stat-pp", "stat-decode")
 BANNED_WORDS = ("arbiter", "/api/cancel", "/api/config", "provider_host",
                 "prompt-body", "response-body", "openResponses", "stat-proxy")
 
@@ -90,9 +91,12 @@ def test_prompt_sizes_render_on_queue_boxes():
     html, js = _html_and_js()
     assert "function promptSpan" not in js and "const promptSpan" in js, \
         "the queue section builds one prompt stat span per box"
-    assert "engine_prompt_total" in js and "engine_reused_tokens" in js \
-        and "engine_prompt_read" in js, "the exact engine numbers drive the box"
-    assert "cached" in js and "to process" in js, "Spec's cached-subtraction wording"
+    assert "engine_prompt_total" in js and "engine_prompt_read" in js, \
+        "the exact engine numbers drive the box"
+    assert "to process" in js, "Spec's to-process wording"
+    box_src = js.split("const promptSpan")[1].split("};")[0]
+    assert "cached" not in box_src, \
+        "Spec 2026-11-25: prompt + to-process make cached redundant — no cached metric in the box"
     assert "prompt_tokens_est" in js, "the door estimate feeds queued/running boxes"
     assert "toLocaleString('en-US')" in js, "token counts render whole with separators"
     assert "~" in js.split("const promptSpan")[1].split("};")[0], \
@@ -186,13 +190,32 @@ def test_model_table_does_not_repaint_under_a_click():
 
 
 def test_model_rows_carry_their_own_speed_and_window():
-    """Per-model prefill/decode live in the catalog row, and the schedule window
-    is editable there (Spec, 2026-11-24: keep separate stats per model)."""
+    """Per-model ALL-TIME averages live in the catalog row (Spec 2026-11-25:
+    shown for every model all the time, with a reset), and the schedule window
+    is editable there too."""
     html, js = _html_and_js()
-    assert "modelSpeedCell" in js and "updateSpeedCells" in js
-    assert "x.decode_tps" in js and "x.prefill_tps" in js
+    assert "modelSpeedText" in js and "updateSpeedCells" in js
+    assert "x.avg_decode_tps" in js and "x.avg_prefill_tps" in js, \
+        "rows show all-time averages, not just-loaded numbers"
+    assert "resetModelStats" in js and "/api/control/reset_stats" in js, \
+        "each model's stats row has a reset button"
+    assert "Avg speed" in html
     assert "/api/control/schedule" in js and "editWindow" in js
     assert "Window" in html, "the catalog has a schedule column"
+
+
+def test_top_bar_shows_live_prompt_progress_then_generation_count():
+    """Spec 2026-11-25: while the engine reads the prompt the top-right shows
+    'processing prompt · x%' ticking upward; while it generates, 'generating ·
+    x tokens'. Both come from the engine's live block, so they update per poll."""
+    html, js = _html_and_js()
+    assert "id=\"live-state\"" in html, "the top bar has a live status pill"
+    assert "engine_live_state" in js and "engine_live_prompt_read" in js \
+        and "engine_live_prompt_total" in js and "engine_live_generated" in js, \
+        "the pill reads the engine's live progress fields"
+    assert "processing prompt ·" in js, "prefill shows a live percentage"
+    assert "Math.round(100 * rd / tot)" in js, "the percentage ticks as the prompt is read"
+    assert "generating ·" in js and " tokens" in js, "generation shows the token count"
 
 
 def test_honest_state_words_no_parked_and_loaded_together():

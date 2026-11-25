@@ -16,6 +16,7 @@
   button{font:inherit} input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;margin:0}
   #topbar{border-bottom:1px solid var(--border);background:var(--panel);padding:9px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
   #brand{font-weight:800;letter-spacing:1px;color:var(--accent)} #brand small{color:var(--dim);font-weight:400;margin-left:7px}
+  #live-state{margin-left:auto;color:var(--accent);font-weight:700;white-space:nowrap;padding:3px 10px;border:1px solid var(--border);border-radius:999px;align-self:center}
   /* Only shown when something is actually broken; when healthy the row is empty. */
   #offline{display:none;align-items:center;gap:6px;border:1px solid #753137;background:#3d1d22;color:#ffb8ba;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700}
   #offline.show{display:inline-flex}
@@ -100,12 +101,11 @@
     <div class="stat"><div class="label">loaded model</div><div class="value v-blue" id="stat-loaded">—</div></div>
     <div class="stat"><div class="label" title="Requests the door is holding: generating now plus queued behind them. The model name is not repeated here — the loaded-model tile already says it.">queue length</div><div class="value v-accent" id="stat-busy">0</div></div>
     <div class="stat"><div class="label">waiting</div><div class="value" id="stat-wait">0</div></div>
-    <div class="stat"><div class="label">prefill</div><div class="value v-blue" id="stat-pp">—</div></div>
-    <div class="stat"><div class="label">decode</div><div class="value v-accent" id="stat-decode">—</div></div>
     <div class="stat"><div class="label">system</div><div class="value" id="stat-power">—</div></div>
     <div class="stat"><div class="label">RAM</div><div class="value" id="stat-ram">—</div></div>
     <div class="stat"><div class="label">VRAM</div><div class="value" id="stat-vram">—</div></div>
   </div>
+  <div id="live-state" class="small" hidden></div>
 </header>
 
 <section id="queue-strip">
@@ -136,7 +136,7 @@
           <h3>Model catalog</h3>
           <div class="banner" id="ondemand-warn"></div>
           <div class="toolbar"><button class="ghost" id="refresh-state">Refresh</button><span class="small" id="registry-status"></span></div>
-          <table><thead><tr><th>Model</th><th>Engine</th><th>State</th><th title="This model's own last-seen prefill/decode speed (whole tokens/s). Only the loaded model's numbers are live; parked models show their previous session.">Speed</th><th title="On = the waitroom may load this model by itself when a request asks for it. Off = a request naming it waits in the queue until you turn it back on or load it by hand.">On demand</th><th title="Daily window during which the waitroom may load this model. Outside it, requests park and run when the window opens.">Window</th><th>Actions</th></tr></thead><tbody id="models-body"></tbody></table>
+          <table><thead><tr><th>Model</th><th>Engine</th><th>State</th><th title="All-time average prefill/decode speed for this model (whole t/s), measured across every run the console has watched and persisted — shown even while the model is unloaded. Reset forgets the history and starts fresh.">Avg speed</th><th title="On = the waitroom may load this model by itself when a request asks for it. Off = a request naming it waits in the queue until you turn it back on or load it by hand.">On demand</th><th title="Daily window during which the waitroom may load this model. Outside it, requests park and run when the window opens.">Window</th><th>Actions</th></tr></thead><tbody id="models-body"></tbody></table>
         </section>
       </div>
     </div>
@@ -219,16 +219,14 @@ function activityBoxes(m) {
   const s = (state.data || {}).system || {};
   const loaded = m && (m.current_loaded_model || m.loaded_model);
   // One box per in-flight request. The engine measures the prompt it is working
-  // on (total tokens, and the share served from cache), so a running request on
-  // the LOADED model shows those exact numbers; anything else shows only the
+  // on (total tokens, and how many still need processing), so a running request
+  // on the LOADED model shows those exact numbers; anything else shows only the
   // door's rough estimate (~4 chars/token) until the engine starts.
   const promptSpan = (reqModel, est) => {
     if (reqModel && reqModel === loaded && s.engine_prompt_total != null) {
       const total = Math.round(+s.engine_prompt_total);
       const read = s.engine_prompt_read != null ? Math.round(+s.engine_prompt_read) : null;
-      const cached = s.engine_reused_tokens != null ? Math.round(+s.engine_reused_tokens)
-                   : (read != null ? Math.max(0, total - read) : null);
-      return `<span title="Measured by the engine for the prompt it is working on. Cached tokens came from its cache; only the rest is processed fresh. The engine works one request at a time, so these belong to the request in prefill.">prompt <b>${tok(total)}</b>${cached != null ? ` · <b>${tok(cached)}</b> cached` : ''}${read != null ? ` · <b>${tok(read)}</b> to process` : ''}</span>`;
+      return `<span title="Measured by the engine for the prompt it is working on; only the to-process share is computed fresh (the rest is already in its cache). The engine works one request at a time, so these belong to the request in prefill.">prompt <b>${tok(total)}</b>${read != null ? ` · <b>${tok(read)}</b> to process` : ''}</span>`;
     }
     if (est != null) {
       return `<span title="Rough estimate from the request text (~4 characters per token). Exact numbers — including how much the cache spares — appear once the engine works on it.">~${tok(est)} tok</span>`;
@@ -311,13 +309,24 @@ function renderMonitor(d) {
   $('stat-busy').textContent=(m.inflight||0)+((m.waiting||[]).length);
   $('stat-busy').className='value '+((m.inflight||0)>0?'v-accent':'');
   $('stat-wait').textContent=(m.waiting||[]).length;
-  const pp = s.prefill_tps != null ? s.prefill_tps : (lastHistoryValue('prefill_tps') ?? state.lastPrefill);
-  const dec = s.decode_tps != null ? s.decode_tps : (lastHistoryValue('decode_tps') ?? state.lastDecode);
+  // Top-right live status pill: prefill progress while the engine reads the
+  // prompt, generated-token count while it streams. The engine reports both in
+  // its /metrics live block, so this updates every poll as the work advances.
+  const lst = String(s.engine_live_state || '');
+  const liveEl = $('live-state');
+  let liveTxt = '';
+  if (lst === 'reading') {
+    const rd = +s.engine_live_prompt_read || 0, tot = +s.engine_live_prompt_total || 0;
+    liveTxt = tot > 0 ? `processing prompt · ${Math.min(100, Math.round(100 * rd / tot))}%` : 'processing prompt';
+  } else if (lst === 'generating') {
+    liveTxt = s.engine_live_generated == null ? 'generating' : `generating · ${tok(Math.round(+s.engine_live_generated))} tokens`;
+  }
+  liveEl.textContent = liveTxt;
+  liveEl.hidden = !liveTxt;
+  liveEl.title = lst === 'generating' && s.engine_live_max_tokens ? `max ${tok(Math.round(+s.engine_live_max_tokens))} tokens` : '';
+  // Kept for the Metrics tab's "tps now" readout (the top-bar tiles are gone).
   if (s.prefill_tps != null) state.lastPrefill = s.prefill_tps;
   if (s.decode_tps != null) state.lastDecode = s.decode_tps;
-  $('stat-pp').textContent=fmt(pp,' t/s'); $('stat-decode').textContent=fmt(dec,' t/s');
-  const tpsNote=`source: ${s.token_speed_source||'—'} · engine: ${s.engine_phase||'idle'} · KV reuse: ${s.engine_cache_hit_rate!=null?Math.round(s.engine_cache_hit_rate*100)+'%':'—'}`;
-  $('stat-pp').title=tpsNote; $('stat-decode').title=tpsNote;
   $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W'); $('stat-ram').textContent=bytes(s.ram_used_bytes); $('stat-vram').textContent=bytes((s.vram_used_mib||0)*1048576);
   renderQueue(m);
   renderGpuCards(d); renderTraffic(d); renderComfy(d); renderStt(d);
@@ -367,13 +376,32 @@ function modelRowStatus(x, d) {
   return '<span class="small" title="Not loaded; a request naming it will load it.">ready</span>';
 }
 
-function modelSpeedCell(x) {
-  const live = x.loaded && x.token_speed_source==='engine/metrics';
-  const dec = x.decode_tps==null?'—':fmt(x.decode_tps);
-  const pp = x.prefill_tps==null?'—':fmt(x.prefill_tps);
-  const note = x.loaded ? (live?'live':'since load') : 'last session';
-  return `<div class="small" title="${esc(note)} speed">dec <b>${dec}</b> · pp <b>${pp}</b></div>`;
+function modelSpeedText(x) {
+  // All-time average for THIS model (persisted sums the console folds from the
+  // engine's own counters) — shown whether or not the model is loaded, so a
+  // parked DeepSeek still shows its lifetime speed. While loaded, the tooltip
+  // adds the current live decode rate. Returns {html,title}; only the span is
+  // repainted by the poll, the neighbouring reset button node stays alive so a
+  // click in flight is never replaced (the 2 s repaint pitfall).
+  const dec = x.avg_decode_tps == null ? '—' : fmt(x.avg_decode_tps);
+  const pp = x.avg_prefill_tps == null ? '—' : fmt(x.avg_prefill_tps);
+  const reqs = x.stats_requests ? ` · ${tok(Math.round(+x.stats_requests))} reqs` : '';
+  const live = x.loaded && x.decode_tps != null ? ` · now ${fmt(x.decode_tps)} t/s` : '';
+  const title = x.avg_decode_tps == null && x.avg_prefill_tps == null
+    ? 'No measured history yet — the console starts recording this model the first time it loads.'
+    : `All-time average (whole t/s) over ${tok(Math.round(+(x.stats_requests||0)))} measured requests${live}.`;
+  return { html: `avg dec <b>${dec}</b> · avg pp <b>${pp}</b>${reqs}`, title };
 }
+
+window.resetModelStats = async (name) => {
+  if (!confirm(`Forget all measured speed history for ${name}? Averages restart from the next request.`)) return;
+  try {
+    await post('/api/control/reset_stats', {model:name});
+    (state.data?.models||[]).forEach(r=>{ if (r.name===name) { r.avg_decode_tps=null; r.avg_prefill_tps=null; r.stats_requests=null; } });
+    state.modelsSig=null;                 // repaint the row now, not next poll
+    if (state.data) renderMonitor(state.data);
+  } catch(e){ alert(e.message); }
+};
 
 function modelWindowCell(x) {
   const w = x.schedule;
@@ -418,19 +446,18 @@ function renderModels(d){
   state.modelsSig=sig;
   $('models-body').innerHTML=rows.map((x,i)=>{
     const on = x.on_demand!==false;
+    const sp = modelSpeedText(x);
     return `<tr><td><b>${esc(x.name)}</b>${x.unlisted?' <span class="small">unlisted</span>':''}<div class="small">${(x.aliases||[]).slice(0,3).map(esc).join(' · ')}</div></td>`
      +`<td>${esc(x.unit||'?')}<div class="small">:${x.port||'?'} · ${x.text===false?'media':'text'}</div></td>`
      +`<td>${modelRowStatus(x,d)}<div class="small">${esc(x.current_version||'')}</div></td>`
-     +`<td id="spd-${i}">${modelSpeedCell(x)}</td>`
+     +`<td><span id="spd-${i}" title="${esc(sp.title)}">${sp.html}</span> <button class="mini" title="Forget this model's measured speed history" onclick='resetModelStats(${JSON.stringify(x.name)})'>reset</button></td>`
      +`<td class="oncol"><input type="checkbox" ${on?'checked':''} aria-label="Load ${esc(x.name)} on demand" onchange='setOnDemand(${JSON.stringify(x.name)},this.checked)'></td>`
      +`<td>${modelWindowCell(x)}</td>`
      +`<td>${modelActions(x)}</td></tr>`;
   }).join('')||'<tr><td colspan=7>No registry models found.</td></tr>';
 }
 
-function updateSpeedCells(rows){
-  rows.forEach((x,i)=>{ const el=document.getElementById('spd-'+i); if(el) el.innerHTML=modelSpeedCell(x); });
-}
+function updateSpeedCells(rows){ rows.forEach((x,i)=>{ const el=document.getElementById('spd-'+i); if(!el)return; const t=modelSpeedText(x); if(el.innerHTML!==t.html) el.innerHTML=t.html; if(el.title!==t.title) el.title=t.title; }); }
 
 function renderServices(rows){ $('service-count').textContent=rows.length; $('services-body').innerHTML=rows.map(r=>{ const logs=r.logs||{}, err=logs.error||0, warn=logs.warn||0; return `<tr><td><b>${esc(r.display)}</b><div class="small">${esc(r.display_label||r.unit||'synthetic process')}</div></td><td>${badge(r.state, ['active','process-active'].includes(r.state)?'loaded':(r.state==='inactive'?'':'error'))}<div class="small">${esc(r.sub_state||'')} · ${r.restarts??0} restarts</div></td><td class="num">${r.main_pid||'—'}</td><td class="num">${fmt(r.cpu_percent,'%')}</td><td class="num">${fmt(r.rss_mib,' MiB')}</td><td class="num">${fmt(r.vram_mib,' MiB')}</td><td class="num ${err?'v-err':warn?'v-warn':''}">${err}/${warn}</td><td class="small" title="${esc((logs.last||{}).text||'')}">${esc(((logs.last||{}).text||'—').slice(0,100))}</td></tr>`}).join('');
   const sel=$('log-unit'); if(!sel.options.length||sel.options.length===1){ rows.forEach(r=>{const o=document.createElement('option');o.value=r.display;o.textContent=r.display;sel.appendChild(o)}); ['model-waitroom','llama-server'].forEach(u=>{if(!rows.some(r=>r.display===u)){const o=document.createElement('option');o.value=u;o.textContent=u;sel.appendChild(o)}}); }

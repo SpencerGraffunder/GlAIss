@@ -203,6 +203,21 @@ def test_on_demand_switch_parks_a_model_without_touching_units(tmp_path, monkeyp
     assert on.json()["on_demand_disabled"] == []
 
 
+def test_reset_stats_route_forgets_a_models_averages(tmp_path, monkeypatch):
+    """The Models-tab reset button: 400 without a model, True on the first
+    reset, False when the model has no stored history to forget."""
+    c, m = make_monitor(tmp_path, monkeypatch)
+    state.fold_engine_totals("Text A", {"since": 1.0, "requests": 2, "prompt_tokens": 100,
+                                        "reused": 0, "output_tokens": 40, "prompt_ms": 50.0,
+                                        "decode_ms": 800.0})
+    with TestClient(c.app) as client:
+        assert client.post("/api/control/reset_stats", json={}).status_code == 400
+        r = client.post("/api/control/reset_stats", json={"model": "Text A"})
+        assert r.status_code == 200 and r.json()["reset"] is True
+        assert state.read_token_stats().get("Text A") is None
+        assert client.post("/api/control/reset_stats", json={"model": "Text A"}).json()["reset"] is False
+
+
 def test_schedule_window_route_and_allowed_now(tmp_path, monkeypatch):
     """POST /api/control/schedule writes the daily window file the door reads,
     and the catalog marks a model outside its window as not allowed right now
@@ -251,22 +266,24 @@ def test_schedule_window_route_and_allowed_now(tmp_path, monkeypatch):
     assert row["schedule"] is None and row["allowed_now"] is True
 
 
-def test_token_stats_are_per_model_and_survive_a_model_change(tmp_path, monkeypatch):
-    """The top bar shows the LOADED model's speed; every catalog row carries its
-    own last-seen pair, read back from the stats file so a fresh load starts
-    with the previous session's numbers instead of blanks."""
+def test_model_rows_show_all_time_averages_that_survive_model_change(tmp_path, monkeypatch):
+    """Spec 2026-11-25: every model row carries its ALL-TIME average speed,
+    persisted by folding the engine's own lifetime counters; parked models
+    keep showing theirs, and the fold adds only the delta between polls."""
     c, m = make_monitor(tmp_path, monkeypatch)
     stats_file = tmp_path / "model-token-stats.json"
     monkeypatch.setattr(state, "DEFAULT_TOKEN_STATS_FILE", stats_file)
 
-    calls = {"port": None}
+    totals_a = {"since": 100.0, "requests": 10, "prompt_tokens": 15000, "reused": 5000,
+                "output_tokens": 600, "prompt_ms": 4000.0, "decode_ms": 10000.0}
 
     async def fake_engine_metrics(port, key):
-        calls["port"] = port
         return {"ok": True, "decode_tps": 66, "prefill_tps": 1500,
                 "prompt_total": 5000, "reused_tokens": 2000, "prompt_read": 3000,
-                "prompt_tokens": 6000,
-                "source": "engine/metrics", "phase": "generating"}
+                "prompt_tokens": 6000, "totals": dict(totals_a),
+                "source": "engine/metrics", "phase": "generating",
+                "live_state": "reading", "live_prompt_read": 500,
+                "live_prompt_total": 2000}
 
     async def fake_registry():
         return m.registry_models, None
@@ -281,39 +298,62 @@ def test_token_stats_are_per_model_and_survive_a_model_change(tmp_path, monkeypa
     snap = asyncio.run(m.snapshot())
     m.history.add(snap)
     rows = {x["name"]: x for x in snap["models"]}
-    assert rows["Text A"]["decode_tps"] == 66 and rows["Text A"]["prefill_tps"] == 1500
-    # "Media B" has never been loaded: nothing cached yet, so blanks.
-    assert rows["Media B"]["decode_tps"] is None
-    assert stats_file.exists(), "the last-seen speeds are persisted per model"
+    # All-time means from the engine's lifetime totals: decode 600 tok / 10 s
+    # = 60 t/s; prefill counts only tokens actually READ: (15000-5000)/4 s.
+    assert rows["Text A"]["avg_decode_tps"] == 60.0
+    assert rows["Text A"]["avg_prefill_tps"] == 2500.0
+    assert rows["Text A"]["stats_requests"] == 10
+    # Never-loaded model has no history yet — the row exists, the cells sit blank.
+    assert rows["Media B"]["avg_decode_tps"] is None
+    assert stats_file.exists(), "the all-time sums are persisted"
+    # Live-block fields ride through for the top-bar prompt-progress pill.
+    assert snap["system"]["engine_live_state"] == "reading"
+    assert snap["system"]["engine_live_prompt_read"] == 500
+    assert snap["system"]["engine_live_prompt_total"] == 2000
     # Engine-measured prompt accounting, flattened for the queue boxes.
     assert snap["system"]["engine_prompt_total"] == 5000
     assert snap["system"]["engine_prompt_read"] == 3000
     assert snap["system"]["engine_reused_tokens"] == 2000
 
-    # Swap to Media B: Text A's row keeps its own last numbers from the file,
-    # and the engine is now polled on Media B's port.
+    # A second poll of the SAME engine run folds only the DELTA, not the totals.
+    totals_a.update({"requests": 12, "prompt_tokens": 17000, "reused": 5000,
+                     "output_tokens": 700, "prompt_ms": 4400.0, "decode_ms": 11000.0})
+    snap = asyncio.run(m.snapshot())
+    rows = {x["name"]: x for x in snap["models"]}
+    assert abs(rows["Text A"]["avg_decode_tps"] - 700 / 11.0) < 0.01
+    assert abs(rows["Text A"]["avg_prefill_tps"] - 12000 / 4.4) < 0.5
+
+    # Swap to Media B (a new engine run with its own totals): Media B gets its
+    # own averages, Text A's row keeps its all-time numbers from the file.
     async def fake_waitroom_b():
         return {"loaded_model": "Media B", "active": "Media B", "inflight": 1, "waiting": []}
 
     async def fake_engine_metrics_b(port, key):
-        calls["port"] = port
         # strata-style schema: no explicit reused — the cached share must be
         # derived as total minus recomputed.
         return {"ok": True, "decode_tps": 9, "prefill_tps": 120,
                 "prompt_total": 400, "prompt_read": 100, "reused_tokens": None,
+                "totals": {"since": 200.0, "requests": 4, "prompt_tokens": 800, "reused": 0,
+                           "output_tokens": 200, "prompt_ms": 500.0, "decode_ms": 20000.0},
                 "source": "engine/metrics"}
 
     monkeypatch.setattr(collectors, "waitroom_snapshot", fake_waitroom_b)
     monkeypatch.setattr(collectors, "engine_metrics", fake_engine_metrics_b)
     snap = asyncio.run(m.snapshot())
     rows = {x["name"]: x for x in snap["models"]}
-    assert rows["Media B"]["decode_tps"] == 9 and rows["Media B"]["prefill_tps"] == 120
-    assert rows["Text A"]["decode_tps"] == 66, "a parked model keeps its own saved speed"
-    assert rows["Text A"]["prefill_tps"] == 1500
-    assert snap["system"]["decode_tps"] == 9, "the top bar follows the loaded model only"
+    assert rows["Media B"]["avg_decode_tps"] == 10.0 and rows["Media B"]["avg_prefill_tps"] == 1600.0
+    assert abs(rows["Text A"]["avg_decode_tps"] - 700 / 11.0) < 0.01, \
+        "a parked model keeps its own all-time averages"
+    assert snap["system"]["decode_tps"] == 9, "the live fields follow the loaded model only"
     assert snap["system"]["engine_prompt_total"] == 400
     assert snap["system"]["engine_reused_tokens"] == 300, \
         "cached share derived from total - recomputed when the engine omits it"
+
+    # Reset forgets a model; its row blanks while the sums restart from zero.
+    assert state.reset_model_stats("Text A", path=stats_file) is True
+    snap = asyncio.run(m.snapshot())
+    rows = {x["name"]: x for x in snap["models"]}
+    assert rows["Text A"]["avg_decode_tps"] is None and rows["Text A"]["avg_prefill_tps"] is None
 
 
 def test_parse_engine_metrics_ds4_schema():
@@ -341,6 +381,8 @@ def test_parse_engine_metrics_ds4_schema():
     assert abs(out["cache_hit_rate"] - 0.800) < 0.01, "reused/prompt_total"
     assert out["prompt_total"] == 31885 and out["reused_tokens"] == 25512
     assert out["lifetime_requests"] == 9
+    assert out["totals"] == {"requests": 9}, "lifetime counters pass through for the all-time fold"
+    assert out["live_state"] == "reading", "the live block's state drives the top-bar pill"
 
 
 def test_parse_engine_metrics_strata_schema_and_live_priority():
