@@ -202,6 +202,13 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
         "live_prompt_total": live.get("prompt_total"),
         "live_generated": live.get("generated"),
         "live_max_tokens": live.get("max_tokens"),
+        # Engine concurrency truth: `running` = requests in a serving slot (the
+        # ones actually prompt-processing or generating right now), `queued` =
+        # requests the engine holds back from that. The console splits the queue
+        # cards with these (Spec 2026-11-25: with serving=1 exactly ONE card
+        # wears the active border; if the engine is set to 2-parallel, two do).
+        "live_running": live.get("running"),
+        "live_queued": live.get("queued"),
         # Lifetime counters of this engine process — the monitor folds deltas of
         # these into the console's per-model all-time averages.
         "totals": payload.get("totals") if isinstance(payload.get("totals"), dict) else None,

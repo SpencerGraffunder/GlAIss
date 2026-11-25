@@ -7,7 +7,7 @@ from glaiss_app.monitor import History
 
 ENGINE_FIXTURE = {
     "live": {"state": "decoding", "phase": "generating", "prompt_tokens": 51081,
-             "generated": 120, "tok_s": 64.2},
+             "generated": 120, "tok_s": 64.2, "queued": 4, "running": 1},
     "requests": [
         {"time": 1, "prompt_total": 81709, "prompt_read": 200, "prompt_ms": 5000.0,
          "decode_ms": 4000.0, "decode_tok_s": 66.7, "hit_rate": 0.789},
@@ -30,6 +30,9 @@ def test_parse_engine_metrics_prefers_live_then_last_request():
     assert out["prefill_tps"] == round(196 / 5.3531)
     assert out["cache_hit_rate"] == 0.773
     assert out["phase"] == "generating"
+    assert out["live_running"] == 1 and out["live_queued"] == 4, \
+        "engine slot/queue counts pass through — the console splits cards and "\
+        "top-bar tiles with them (Spec 2026-11-25: 1 generating / 4 waiting)"
     assert out["requests"] == 2
     assert out["lifetime_requests"] == 250
 

@@ -561,6 +561,8 @@ class Monitor:
                 "engine_live_prompt_total": engine.get("live_prompt_total"),
                 "engine_live_generated": engine.get("live_generated"),
                 "engine_live_max_tokens": engine.get("live_max_tokens"),
+                "engine_live_running": engine.get("live_running"),
+                "engine_live_queued": engine.get("live_queued"),
                 "engine_cache_hit_rate": engine.get("cache_hit_rate"),
                 "engine_requests": engine.get("lifetime_requests"),
                 "gpu_cards": gpu_cards,

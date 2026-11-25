@@ -20,7 +20,8 @@ BANNED_IDS = ("stat-live", "stat-monitor", "stat-door", "stat-active",
               "ws-dot", "monitor-dot", "job-status", "waitroom-lane",
               "stat-pp", "stat-decode", "last-event", "live-state")
 BANNED_WORDS = ("arbiter", "/api/cancel", "/api/config", "provider_host",
-                "prompt-body", "response-body", "openResponses", "stat-proxy")
+                "prompt-body", "response-body", "openResponses", "stat-proxy",
+                "in flight")
 
 
 def _html_and_js():
@@ -84,10 +85,12 @@ def test_redundant_manual_controls_are_removed():
 
 
 def test_prompt_sizes_render_on_queue_boxes():
-    """Spec 2026-11-24: every queue box carries a prompt-size stat. A running
-    request on the loaded model shows the ENGINE's measured numbers — total,
-    cached, and the remainder actually processed — and everything else shows
-    the door's ~4-chars/token estimate. Whole numbers, thousands separators."""
+    """Spec 2026-11-24 (fixed 2026-11-25): every queue card carries a
+    prompt-size stat. The ENGINE's measured numbers belong to the ONE request
+    its live block tracks, so only that card shows them — every other card
+    shows the door's ~4-chars/token estimate (previously all running cards
+    echoed the same engine numbers and jumped together). Whole numbers,
+    thousands separators."""
     html, js = _html_and_js()
     assert "function promptSpan" not in js and "const promptSpan" in js, \
         "the queue section builds one prompt stat span per box"
@@ -206,26 +209,42 @@ def test_model_rows_carry_their_own_speed_and_window():
 
 
 def test_running_card_shows_live_prompt_progress_then_generation_count():
-    """Spec 2026-11-25 (clarified): the live readout lives in the TOP-RIGHT OF
-    THE REQUEST CARD, not the window — 'processing prompt · x%' while the engine
-    reads the prompt, 'generating · x tokens' while it streams. Cards also carry
-    separate waited/running timers, and a queued card wears a dimmed green
-    outline while the active card keeps the accent one."""
+    """Spec 2026-11-25 (two clarifications): the live readout lives in the
+    TOP-RIGHT OF THE REQUEST CARD, and cards that have not started prompt
+    processing / generation yet must say `queued` with the dimmed green outline
+    — only as many cards wear the active accent border as the engine actually
+    runs in parallel (engine_live_running; serving=1 today, so exactly one)."""
     html, js = _html_and_js()
+    split = js.split("function engineSplit")[1].split("function activityBoxes")[0]
+    assert "engine_live_running" in split, \
+        "the active-card count comes from the ENGINE's own slot count"
     block = js.split("function activityBoxes")[1].split("function renderQueue")[0]
     assert "processing prompt ·" in block and "generating ·" in block, \
-        "the card status shows prefill percent, then the generated token count"
+        "the active card shows prefill percent, then the generated token count"
     assert "engine_live_prompt_read" in block and "engine_live_prompt_total" in block \
         and "engine_live_generated" in block, "the engine live block drives the card"
-    assert "engine_live_state" in block and "target" in block, \
-        "the live numbers attach to the OLDEST running card — the engines serve " \
-        "one request at a time in arrival order, younger cards stay 'in flight'"
-    assert "waited <b>" in block and "running <b>" in block, \
-        "each card separates queue wait from processing/generating time"
-    assert 'class="small live"' in block, "the status sits in the card's top-right corner"
-    assert "rgba(66,211,163,.38)" in html, "queued cards get the dimmed green outline"
+    assert "'queued'" in block and "es.liveTarget" in block, \
+        "cards waiting their turn at the engine say 'queued', never the active status"
+    assert "'qbox running' + (isActive ? '' : ' behind')" in block, \
+        "only engine-slot cards keep the accent border; the rest get .behind"
+    assert "running.behind" in html and "rgba(66,211,163,.38)" in html, \
+        ".behind renders the dimmed green outline"
+    assert "waiting <b>" in block, "engine-queued cards count their waiting time"
+    assert "promptSpan(i === es.liveTarget" in block, \
+        "the engine's MEASURED prompt numbers go on the live card ONLY — " \
+        "before this every card echoed them and they all moved together"
     waiting_block = js.split("(m?.waiting||[]).forEach")[1].split("});")[0]
-    assert "waited <b>" in waiting_block, "waiting cards tick their wait counter"
+    assert "waited <b>" in waiting_block, "door-queue cards tick their wait counter"
+
+
+def test_top_bar_counts_engine_state_not_door_admission():
+    """Spec 2026-11-25: five door-admitted requests with serving=1 must read
+    'generating 1 / waiting 4', not 'generating 5 / waiting 0'."""
+    html, js = _html_and_js()
+    assert "$('stat-busy').textContent = es.activeIdx.length;" in js, \
+        "generating tile = requests in an engine serving slot"
+    assert "$('stat-wait').textContent = (m.waiting || []).length + es.engineQueued;" in js, \
+        "waiting tile = door-held PLUS admitted-but-engine-queued"
 
 
 def test_ram_and_vram_tiles_show_used_over_total():
