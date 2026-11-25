@@ -255,7 +255,7 @@ function activityBoxes(m) {
     const reason = w.blocked ? blockedReason(w.model, m) : 'waiting';
     b.innerHTML = `<div class="a"><b>${esc(w.model)}</b><span class="small">${esc(reason)}</span></div>`
       + `<div class="m"><span>waited <b>${fmt(w.waited_s,'s')}</b></span>${w.blocked?`<span title="This model cannot load right now (its On demand switch is off or the clock is outside its enabled window). The request waits here and runs on its own the moment the model is allowed again.">won't load yet</span>`:''}`
-      + promptSpan(w.blocked ? null : w.model, w.prompt_tokens_est)
+      + promptSpan(null, w.prompt_tokens_est)
       + `</div>`;
     boxes.push(b);
   });

@@ -97,6 +97,12 @@ def test_prompt_sizes_render_on_queue_boxes():
     assert "toLocaleString('en-US')" in js, "token counts render whole with separators"
     assert "~" in js.split("const promptSpan")[1].split("};")[0], \
         "an estimate is labeled approximate, never dressed as exact"
+    # A QUEUED box must never wear the engine's exact numbers: they belong to
+    # the request the engine is actually working on, not one that has not
+    # reached it yet — the waiting list calls the span with no request model.
+    queue_block = js.split("(m?.waiting||[]).forEach")[1].split("});")[0]
+    assert "promptSpan(null" in queue_block, \
+        "queued boxes show only the estimate, never the running request's exact numbers"
 
 
 def test_redundant_tiles_and_queue_jargon_are_gone():
