@@ -82,6 +82,23 @@ def test_redundant_manual_controls_are_removed():
     assert "lock_after_load" not in js, "Load must not re-add the lock action"
 
 
+def test_prompt_sizes_render_on_queue_boxes():
+    """Spec 2026-11-24: every queue box carries a prompt-size stat. A running
+    request on the loaded model shows the ENGINE's measured numbers — total,
+    cached, and the remainder actually processed — and everything else shows
+    the door's ~4-chars/token estimate. Whole numbers, thousands separators."""
+    html, js = _html_and_js()
+    assert "function promptSpan" not in js and "const promptSpan" in js, \
+        "the queue section builds one prompt stat span per box"
+    assert "engine_prompt_total" in js and "engine_reused_tokens" in js \
+        and "engine_prompt_read" in js, "the exact engine numbers drive the box"
+    assert "cached" in js and "to process" in js, "Spec's cached-subtraction wording"
+    assert "prompt_tokens_est" in js, "the door estimate feeds queued/running boxes"
+    assert "toLocaleString('en-US')" in js, "token counts render whole with separators"
+    assert "~" in js.split("const promptSpan")[1].split("};")[0], \
+        "an estimate is labeled approximate, never dressed as exact"
+
+
 def test_redundant_tiles_and_queue_jargon_are_gone():
     """Spec 2026-11-24: the hold tile, the engine-requests tile and the
     'llpc waitroom console' subtitle are gone; the queue boxes stopped speaking

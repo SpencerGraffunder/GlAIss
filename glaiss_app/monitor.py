@@ -442,6 +442,15 @@ class Monitor:
         # place a real t/s number can come from.
         loaded_row = C.resolve_registry_model(self.registry_models, current_loaded_model or "") or {}
         engine = await C.engine_metrics(loaded_row.get("port"), C.read_llama_swap_key())
+        # Prompt accounting for the queue boxes: prompt_total is the engine's last
+        # measured prefill, prompt_read the tokens it actually recomputed; the
+        # cached share is the difference (DS4 names it directly, strata only
+        # gives hit_rate, so derive it when the engine does not name it).
+        eng_total = engine.get("prompt_total")
+        eng_read = engine.get("prompt_read")
+        eng_reused = engine.get("reused_tokens")
+        if eng_reused is None and eng_total is not None and eng_read is not None:
+            eng_reused = max(0.0, float(eng_total) - float(eng_read))
         decode_tps = engine.get("decode_tps")
         prefill_tps = engine.get("prefill_tps")
         if decode_tps is None:
@@ -531,6 +540,9 @@ class Monitor:
                 "token_speed_source": tps_source,
                 "engine_phase": engine.get("phase"),
                 "engine_prompt_tokens": engine.get("prompt_tokens"),
+                "engine_prompt_total": eng_total,
+                "engine_prompt_read": eng_read,
+                "engine_reused_tokens": eng_reused,
                 "engine_cache_hit_rate": engine.get("cache_hit_rate"),
                 "engine_requests": engine.get("lifetime_requests"),
                 "gpu_cards": gpu_cards,

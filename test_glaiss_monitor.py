@@ -264,6 +264,8 @@ def test_token_stats_are_per_model_and_survive_a_model_change(tmp_path, monkeypa
     async def fake_engine_metrics(port, key):
         calls["port"] = port
         return {"ok": True, "decode_tps": 66, "prefill_tps": 1500,
+                "prompt_total": 5000, "reused_tokens": 2000, "prompt_read": 3000,
+                "prompt_tokens": 6000,
                 "source": "engine/metrics", "phase": "generating"}
 
     async def fake_registry():
@@ -283,6 +285,10 @@ def test_token_stats_are_per_model_and_survive_a_model_change(tmp_path, monkeypa
     # "Media B" has never been loaded: nothing cached yet, so blanks.
     assert rows["Media B"]["decode_tps"] is None
     assert stats_file.exists(), "the last-seen speeds are persisted per model"
+    # Engine-measured prompt accounting, flattened for the queue boxes.
+    assert snap["system"]["engine_prompt_total"] == 5000
+    assert snap["system"]["engine_prompt_read"] == 3000
+    assert snap["system"]["engine_reused_tokens"] == 2000
 
     # Swap to Media B: Text A's row keeps its own last numbers from the file,
     # and the engine is now polled on Media B's port.
@@ -291,7 +297,11 @@ def test_token_stats_are_per_model_and_survive_a_model_change(tmp_path, monkeypa
 
     async def fake_engine_metrics_b(port, key):
         calls["port"] = port
-        return {"ok": True, "decode_tps": 9, "prefill_tps": 120, "source": "engine/metrics"}
+        # strata-style schema: no explicit reused — the cached share must be
+        # derived as total minus recomputed.
+        return {"ok": True, "decode_tps": 9, "prefill_tps": 120,
+                "prompt_total": 400, "prompt_read": 100, "reused_tokens": None,
+                "source": "engine/metrics"}
 
     monkeypatch.setattr(collectors, "waitroom_snapshot", fake_waitroom_b)
     monkeypatch.setattr(collectors, "engine_metrics", fake_engine_metrics_b)
@@ -301,6 +311,9 @@ def test_token_stats_are_per_model_and_survive_a_model_change(tmp_path, monkeypa
     assert rows["Text A"]["decode_tps"] == 66, "a parked model keeps its own saved speed"
     assert rows["Text A"]["prefill_tps"] == 1500
     assert snap["system"]["decode_tps"] == 9, "the top bar follows the loaded model only"
+    assert snap["system"]["engine_prompt_total"] == 400
+    assert snap["system"]["engine_reused_tokens"] == 300, \
+        "cached share derived from total - recomputed when the engine omits it"
 
 
 def test_parse_engine_metrics_ds4_schema():

@@ -652,12 +652,14 @@ class Arbiter:
             "active": self.active,
             "inflight": self.inflight,
             "inflight_requests": [{"req_id": e["seq"], "model": e["model"],
-                                   "since_s": round(now - e.get("admitted_at", e["at"]), 1)}
+                                   "since_s": round(now - e.get("admitted_at", e["at"]), 1),
+                                   "prompt_tokens_est": e.get("ptok")}
                                   for e in self._active],
             "quantum_left_s": left,
             "handoffs": self.handoffs,
             "waiting": [{"model": e["model"],
                          "waited_s": round(now - e["at"], 1),
+                         "prompt_tokens_est": e.get("ptok"),
                          "blocked": not self._allowed(e["model"])}
                         for e in self._q],
         }
@@ -779,13 +781,15 @@ class Arbiter:
         self._arm()
 
     # -- admission ----------------------------------------------------
-    async def acquire(self, model, timeout):
+    async def acquire(self, model, timeout, pchars=None, ptok=None):
         """Wait for the slot. Returns the entry; raises QueueTimeout.
         Cancellation-safe: a client that goes away mid-wait removes itself
         (or gives the slot straight back if it was admitted in the moment
-        of the cancel) so the FIFO never carries a ghost."""
+        of the cancel) so the FIFO never carries a ghost.
+        pchars/ptok: display-only prompt-size estimate for the queue boxes."""
         entry = {"model": model, "ev": asyncio.Event(), "at": time.monotonic(),
-                 "seq": self._seq, "admitted": False}
+                 "seq": self._seq, "admitted": False,
+                 "pchars": pchars, "ptok": ptok}
         self._seq += 1
         self._q.append(entry)
         emit_glaiss_event("queue_arrive", model=model, req_id=entry["seq"])
@@ -904,6 +908,47 @@ def extract_model(body: bytes):
         except Exception:
             pass
     return None
+
+
+def prompt_size(body: bytes):
+    """(chars, est_tokens) for the prompt text of a chat/completions body.
+
+    Display-only: the queue boxes show a rough prompt size while a request
+    still sits in the queue (the engine reports exact numbers once it starts,
+    and the cached share is unknowable before then). ~4 chars/token is the
+    usual heuristic for mixed prose+code; we deliberately show "~" for it.
+    Returns (None, None) for anything we cannot confidently measure — never
+    raises, never puts a fake number on the page.
+    """
+    if not body:
+        return None, None
+    try:
+        d = json.loads(body) if len(body) <= FULL_PARSE_LIMIT else None
+    except Exception:
+        d = None
+    parts = []
+    if isinstance(d, dict):
+        if isinstance(d.get("prompt"), str):       # legacy completions shape
+            parts.append(d["prompt"])
+        msgs = d.get("messages")
+        if isinstance(msgs, list):
+            for msg in msgs:
+                if not isinstance(msg, dict):
+                    continue
+                c = msg.get("content")
+                if isinstance(c, str):
+                    parts.append(c)
+                elif isinstance(c, list):          # multimodal: text parts only
+                    for p in c:
+                        if (isinstance(p, dict) and p.get("type") in ("text", "input_text")
+                                and isinstance(p.get("text"), str)):
+                            parts.append(p["text"])
+    if not parts:
+        return None, None
+    chars = sum(len(p) for p in parts)
+    if not chars:
+        return None, None
+    return chars, max(1, round(chars / 4))
 
 
 def set_model(body: bytes, model: str) -> bytes:
@@ -1307,7 +1352,8 @@ async def handle(req: web.Request) -> web.StreamResponse:
                 try:
                     if arb is not None and target:
                         try:
-                            entry = await arb.acquire(target, WAIT_S)
+                            entry = await arb.acquire(target, WAIT_S,
+                                                      *prompt_size(fwd_body or body))
                         except QueueTimeout as e:
                             log.info("queue timeout: %s", e)
                             return web.json_response(

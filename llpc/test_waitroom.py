@@ -915,6 +915,48 @@ async def t_schedule_window_parks_then_serves_through_the_door():
             importlib.reload(W)      # drop the stubs before the next scenario
 
 
+async def t_prompt_size_units():
+    """The display-only prompt estimate: text lengths only, ~4 chars/token,
+    and (None, None) whenever the body cannot be measured honestly."""
+    j = lambda d: json.dumps(d).encode()
+    ck(W.prompt_size(j({"model": "x", "messages":
+                        [{"role": "user", "content": "a" * 400}]})) == (400, 100),
+       "prompt size: chat text counted, /4 estimate")
+    ck(W.prompt_size(j({"prompt": "b" * 80})) == (80, 20),
+       "prompt size: legacy completions 'prompt' field counted")
+    parts = [{"type": "text", "text": "c" * 40},
+             {"type": "image_url", "image_url": {"url": "http://x/y.png"}}]
+    ck(W.prompt_size(j({"messages": [{"role": "user", "content": parts}]})) == (40, 10),
+       "prompt size: multimodal content counts only the text parts")
+    ck(W.prompt_size(b"this is not json") == (None, None),
+       "prompt size: unparseable body yields NO estimate, never a guess")
+    ck(W.prompt_size(j({"model": "x"})) == (None, None),
+       "prompt size: body with no prompt text yields None")
+    ck(W.prompt_size(b"") == (None, None), "prompt size: empty body yields None")
+
+
+async def t_prompt_estimate_travels_with_queue_entries():
+    """The estimate rides on the queue entry: visible in /state's waiting list
+    and (when supplied) in inflight_requests."""
+    arb = W.Arbiter()
+    e1 = await arb.acquire("Model One", 5)          # no estimate supplied
+    task = asyncio.create_task(arb.acquire("Model Two", 5, 400, 100))
+    await asyncio.sleep(0.05)
+    try:
+        snap = arb.snapshot()
+        ck(snap["waiting"][0]["prompt_tokens_est"] == 100,
+           "prompt size: parked request carries its estimate into /state waiting")
+        ck(snap["inflight_requests"][0]["prompt_tokens_est"] is None,
+           "prompt size: a request without a measurable prompt shows no estimate")
+    finally:
+        task.cancel()
+        try:
+            await task
+        except BaseException:
+            pass
+        arb.release(e1)
+
+
 async def t_access_log_filter_keeps_meaningful_lines():
     """The console polls GET /state every 2 s; those lines must stop filling
     the journal, while POSTs and failed polls stay visible."""
