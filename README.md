@@ -18,9 +18,12 @@ trusted VPN network (in practice: Cloudflare Access on
 ## What it shows
 
 - llpc waitroom state: loaded model, what is generating right now, one queue box
-  per in-flight request, ordered waiting models, swap hysteresis, quantum timer,
-  handoffs, Comfy claim, intent, manual lock, manual-control suppression, and
-  which models are switched off for on-demand loading.
+  per in-flight request (each with a prompt-size stat: the engine's measured
+  total / cached / to-process numbers while it runs, or a ~chars/4 estimate while
+  it waits), ordered waiting models, swap hysteresis, Comfy claim, intent, manual
+  lock, manual-control suppression, and which models are switched off for
+  on-demand loading. Door internals (quantum timer, handoffs) stay in `/state`
+  for the API but are off the page.
 - **On-demand model switch (the Models tab checkbox).** Off means the door will
   not load that model by itself: a request naming it parks in the queue until
   you switch it back on or load it by hand, while requests behind it for an
