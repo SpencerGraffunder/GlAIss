@@ -25,21 +25,31 @@ trusted VPN network (in practice: Cloudflare Access on
   on-demand loading. Door internals (quantum timer, handoffs) stay in `/state`
   for the API but are off the page.
 - **Live stats per request CARD** (2026-11-25; Spec coined "cards" for the queue
-  tiles): a running card's top-right reads `processing prompt · x%` from the
-  engine's live progress counters (`live.prompt_read / live.prompt_total`),
-  ticking as the prompt is read, then `generating · x tokens` while it streams
-  (`live.generated`). The engines serve strictly one request at a time in
-  arrival order, so the engine's numbers attach to the OLDEST running card on
-  the loaded model; younger overlapping cards honestly stay `in flight` until
-  the engine reaches them. Each card separates `waited` (time in the door
-  queue) from `running` (time at the engine); queued cards wear a dimmed-green
-  outline, the active card the full accent border.
-- **Top bar tiles are honest** (2026-11-25): `generating` counts what the
-  engine is working on or streaming now, `waiting` counts what the door holds
-  back — the old `queue length` tile summed both, which read as a duplicate of
-  `waiting`. RAM and VRAM show used/total fractions (`116/123 GB`, `37/40 GB`).
-  The per-poll `door: queue_admit …` event line is gone; the Logs tab owns
-  door events.
+  tiles): the engine's own `live.running`/`live.queued` split the running cards.
+  Cards in a serving slot wear the accent border; the one the engine's live
+  block tracks reads `processing prompt · x%` ticking during prefill
+  (`live.prompt_read / live.prompt_total`), then `generating · x tokens` while
+  it streams (`live.generated`). Everything else reads `queued` with a
+  dimmed-green outline and counts its wait (door queue + engine queue). With
+  `serving: 1` exactly ONE card lights up; if the engine is set to 2-parallel,
+  two do — the console follows the engine, it does not guess. Each card
+  separates `waited`/`waiting` from `running` time (the door reports
+  `inflight_requests[].waited_s` once the staged door build restarts; cards
+  degrade gracefully until then). The words "in flight" are banned from the
+  page by contract test.
+- **Top bar tiles are honest** (2026-11-25): `generating` counts requests in an
+  ENGINE serving slot and `waiting` counts door-held plus admitted-but-queued-
+  at-engine — five door-admitted requests with serving=1 read 1/4, never 5/0
+  (the old `queue length` tile summed everything and read as a duplicate of
+  `waiting`; it and the per-poll `door: queue_admit …` event line are gone —
+  the Logs tab owns door events). RAM and VRAM show used/total fractions
+  (`116/123 GB`, `37/40 GB`).
+- **Prompt-size stats are attributed, not echoed** (fixed 2026-11-25): the
+  engine's measured `prompt <total> · <to-process>` belongs to the ONE request
+  its live block tracks and renders on that card only; every other card shows
+  its own door estimate (`~N tok`, ~chars/4). Before this every running card
+  read the same engine fields, so all cards showed one number and moved
+  together — which looked like a per-request stat but was not.
 - **On-demand model switch (the Models tab checkbox).** Off means the door will
   not load that model by itself: a request naming it parks in the queue until
   you switch it back on or load it by hand, while requests behind it for an
