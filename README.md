@@ -24,10 +24,22 @@ trusted VPN network (in practice: Cloudflare Access on
   lock, manual-control suppression, and which models are switched off for
   on-demand loading. Door internals (quantum timer, handoffs) stay in `/state`
   for the API but are off the page.
-- **Top-right live status pill** (2026-11-25): while the engine reads a prompt it
-  shows `processing prompt · x%` from the engine's live progress counters
-  (`live.prompt_read / live.prompt_total`), then `generating · x tokens` while it
-  streams (`live.generated`); hidden whenever the engine is idle or unloaded.
+- **Live stats per request CARD** (2026-11-25; Spec coined "cards" for the queue
+  tiles): a running card's top-right reads `processing prompt · x%` from the
+  engine's live progress counters (`live.prompt_read / live.prompt_total`),
+  ticking as the prompt is read, then `generating · x tokens` while it streams
+  (`live.generated`). The engines serve strictly one request at a time in
+  arrival order, so the engine's numbers attach to the OLDEST running card on
+  the loaded model; younger overlapping cards honestly stay `in flight` until
+  the engine reaches them. Each card separates `waited` (time in the door
+  queue) from `running` (time at the engine); queued cards wear a dimmed-green
+  outline, the active card the full accent border.
+- **Top bar tiles are honest** (2026-11-25): `generating` counts what the
+  engine is working on or streaming now, `waiting` counts what the door holds
+  back — the old `queue length` tile summed both, which read as a duplicate of
+  `waiting`. RAM and VRAM show used/total fractions (`116/123 GB`, `37/40 GB`).
+  The per-poll `door: queue_admit …` event line is gone; the Logs tab owns
+  door events.
 - **On-demand model switch (the Models tab checkbox).** Off means the door will
   not load that model by itself: a request naming it parks in the queue until
   you switch it back on or load it by hand, while requests behind it for an
@@ -59,7 +71,7 @@ trusted VPN network (in practice: Cloudflare Access on
   the console never watched load shows a dash until its first load). The
   per-model `reset` button (POST `/api/control/reset_stats`) forgets a model's
   sums. The old top-bar prefill/decode tiles were removed with this change —
-  live rates read from the pill, the Models tab, or the Metrics chart.
+  live rates read from the cards, the Models tab, or the Metrics chart.
 - Per-service rows matching the standard llpc journal command:
 
   `journalctl -u strata31 -u llama-qwen -u comfy-ui -u llama-swap -u whisper-server -u whisper-shim -u model-waitroom -u strata-dsv41.service -u llama-server`
