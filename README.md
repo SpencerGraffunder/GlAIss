@@ -29,7 +29,19 @@ trusted VPN network (in practice: Cloudflare Access on
   Cards in a serving slot wear the accent border; the one the engine's live
   block tracks reads `processing prompt · x%` ticking during prefill
   (`live.prompt_read / live.prompt_total`), then `generating · x tokens` while
-  it streams (`live.generated`). Everything else reads `queued` with a
+  it streams (`live.generated`). **Both numbers tick at 10 Hz** (2026-11-26):
+  the engine samples its live block only ~every 2 s, so the page anchors every
+  snapshot (`anchorLive`) and extrapolates between anchors — reading rate is an
+  EMA of measured `prompt_read` deltas, generating adopts the engine's `tok_s`
+  the moment it appears (`live_tok_s` passes through collectors/monitor). A
+  100 ms ticker patches the live card's status span. Honesty rails:
+  extrapolation freezes 2.5 s after the last anchor (a dead console stops
+  counting, it doesn't lie), prefill % caps at 99 until the engine itself
+  flips state, tokens never extrapolate past `max_tokens`, and a re-render of
+  an identical snapshot keeps the old anchor (no backwards snap). Known engine
+  limit: Strata reports `prompt_read` only at 12800-token read-blocks, so the
+  first ~5 s of a cold prefill honestly says `processing prompt` without a
+  percent. Everything else reads `queued` with a
   dimmed-green outline and counts its wait (door queue + engine queue). With
   `serving: 1` exactly ONE card lights up; if the engine is set to 2-parallel,
   two do — the console follows the engine, it does not guess. Each card
