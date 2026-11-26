@@ -202,6 +202,9 @@ def parse_engine_metrics(payload: Any) -> Dict[str, Any]:
         "live_prompt_total": live.get("prompt_total"),
         "live_generated": live.get("generated"),
         "live_max_tokens": live.get("max_tokens"),
+        # Instantaneous decode rate — the page extrapolates between samples with
+        # it so the token counter can tick at 10 Hz (Spec 2026-11-26).
+        "live_tok_s": live.get("tok_s"),
         # Engine concurrency truth: `running` = requests in a serving slot (the
         # ones actually prompt-processing or generating right now), `queued` =
         # requests the engine holds back from that. The console splits the queue

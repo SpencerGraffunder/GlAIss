@@ -283,7 +283,7 @@ def test_model_rows_show_all_time_averages_that_survive_model_change(tmp_path, m
                 "prompt_tokens": 6000, "totals": dict(totals_a),
                 "source": "engine/metrics", "phase": "generating",
                 "live_state": "reading", "live_prompt_read": 500,
-                "live_prompt_total": 2000}
+                "live_prompt_total": 2000, "live_tok_s": 64.2}
 
     async def fake_registry():
         return m.registry_models, None
@@ -310,6 +310,8 @@ def test_model_rows_show_all_time_averages_that_survive_model_change(tmp_path, m
     assert snap["system"]["engine_live_state"] == "reading"
     assert snap["system"]["engine_live_prompt_read"] == 500
     assert snap["system"]["engine_live_prompt_total"] == 2000
+    assert snap["system"]["engine_live_tok_s"] == 64.2, \
+        "the decode rate rides through — the page extrapolates token ticks with it"
     # Engine-measured prompt accounting, flattened for the queue boxes.
     assert snap["system"]["engine_prompt_total"] == 5000
     assert snap["system"]["engine_prompt_read"] == 3000

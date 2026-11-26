@@ -31,8 +31,11 @@ def test_parse_engine_metrics_prefers_live_then_last_request():
     assert out["cache_hit_rate"] == 0.773
     assert out["phase"] == "generating"
     assert out["live_running"] == 1 and out["live_queued"] == 4, \
-        "engine slot/queue counts pass through — the console splits cards and "\
+        "engine slot/queue counts pass through — the console splits cards and " \
         "top-bar tiles with them (Spec 2026-11-25: 1 generating / 4 waiting)"
+    assert out["live_tok_s"] == 64.2, \
+        "instant decode rate passes through — the page extrapolates 10 Hz " \
+        "token ticks from it between samples (Spec 2026-11-26)"
     assert out["requests"] == 2
     assert out["lifetime_requests"] == 250
 

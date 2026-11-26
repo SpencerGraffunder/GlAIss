@@ -245,6 +245,86 @@ function engineSplit(m) {
            engineQueued: Math.max(0, onLoaded.length - active) };
 }
 
+// ---- 10 Hz live extrapolation (Spec 2026-11-26) ------------------------------
+// The engine's live block is only sampled once per poll, so a naive card jumps
+// twice a second. Anchor on every snapshot and extrapolate between anchors: the
+// prefill % climbs at the learned read-rate, the token count at tok_s. A 100 ms
+// ticker patches the live span; the 1 s rebuild calls the same extrapolator, so
+// both agree. Extrapolation FREEZES 2.5 s past the anchor — a dead console must
+// stop counting, not lie forever — prefill % is capped at 99 while the engine
+// still says "reading", and the token count never extrapolates past max_tokens.
+state.live = null;
+function anchorLive(s) {
+  const phase = (s.engine_live_state === 'reading' || s.engine_live_state === 'generating')
+    ? s.engine_live_state : null;
+  if (!phase) { state.live = null; return; }
+  const now = Date.now();
+  const num = v => (v == null || !Number.isFinite(+v)) ? null : +v;
+  const rd = num(s.engine_live_prompt_read), tot = num(s.engine_live_prompt_total);
+  const gen = num(s.engine_live_generated), mx = num(s.engine_live_max_tokens);
+  const tps = num(s.engine_live_tok_s);
+  // NOTE: Strata's live block only publishes prompt_read at read-block
+  // boundaries (0 → 12800 → 25600...), and there is NO finer source in the
+  // payload (engine_prompt_read is this request's to-process SIZE, constant).
+  // So during the first block (~5 s) the card honestly says 'processing
+  // prompt' without a percent; from the first boundary on, the rate is learned
+  // and the % ticks at 10 Hz until it flips to generating. (Spec 2026-11-26.)
+  const prev = state.live;
+  // A render can happen twice against the SAME snapshot (poll + WS push in the
+  // same collect window). Re-anchoring identical measurements at a later t
+  // would snap the extrapolated display backwards — keep the old anchor.
+  if (prev && prev.phase === phase && prev.rd === rd && prev.tot === tot
+      && prev.gen === gen && prev.mx === mx) return;
+  // Rates live per-PHASE: when the phase just flipped (reading → generating),
+  // the previous phase's rates must NOT carry — and a generating anchor adopts
+  // the engine's tok_s immediately, so the counter never sits frozen for a poll
+  // cycle (Spec 2026-11-26 probes: the flip kept rateGen 0 and froze ticks).
+  let rateRead = prev && prev.phase === phase ? prev.rateRead : 0;
+  let rateGen = prev && prev.phase === phase ? prev.rateGen
+    : (phase === 'generating' && tps > 0 ? tps : 0);
+  if (prev && prev.phase === phase) {
+    const dt = (now - prev.t) / 1000;
+    if (dt > 0.15) {
+      if (phase === 'reading' && rd != null && prev.rd != null && rd > prev.rd) {
+        const inst = (rd - prev.rd) / dt;
+        rateRead = rateRead ? 0.4 * inst + 0.6 * rateRead : inst;
+      }
+      if (phase === 'generating') {
+        const inst = tps > 0 ? tps
+          : (gen != null && prev.gen != null && gen > prev.gen ? (gen - prev.gen) / dt : 0);
+        if (inst > 0) rateGen = rateGen ? 0.35 * inst + 0.65 * rateGen : inst;
+      }
+    }
+  }
+  state.live = { t: now, phase, rd, tot, gen, mx, rateRead, rateGen };
+}
+function liveStatus(now = Date.now()) {
+  // {status, title} for the request the engine is working on RIGHT NOW,
+  // extrapolated from the last real sample. Null when nothing is live.
+  const a = state.live;
+  if (!a) return null;
+  const dt = Math.min(2.5, Math.max(0, (now - a.t) / 1000));
+  if (a.phase === 'reading') {
+    if (!(a.tot > 0)) return { status: 'processing prompt', title: 'How much of the prompt the engine has read — it updates as it goes.' };
+    const rd = Math.min(a.tot, (a.rd || 0) + a.rateRead * dt);
+    return { status: `processing prompt · ${Math.min(99, Math.round(100 * rd / a.tot))}%`,
+             title: 'How much of the prompt the engine has read — it updates as it goes.' };
+  }
+  let g = a.gen == null ? null : Math.floor(a.gen + a.rateGen * dt);
+  if (g != null && a.mx) g = Math.min(g, Math.round(a.mx));
+  return { status: g == null ? 'generating' : `generating · ${tok(g)} tokens`,
+           title: a.mx ? `max ${tok(Math.round(a.mx))} tokens` : '' };
+}
+function tickLive() {
+  if (!state.live) return;
+  const ls = liveStatus();
+  if (!ls) return;
+  document.querySelectorAll('#queue-boxes .live').forEach(el => {
+    if (el.textContent !== ls.status) el.textContent = ls.status;
+  });
+}
+setInterval(tickLive, 100);
+
 function activityBoxes(m) {
   const now = Date.now()/1000;
   state.done = state.done.filter(x => now - x.at < DONE_SHOW_S);
@@ -279,15 +359,10 @@ function activityBoxes(m) {
       const isActive = activeSet.has(i);
       let status = 'queued', liveTitle = '';
       if (i === es.liveTarget) {
-        if (s.engine_live_state === 'reading') {
-          const rd = +s.engine_live_prompt_read || 0, tot = +s.engine_live_prompt_total || 0;
-          status = tot > 0 ? `processing prompt · ${Math.min(100, Math.round(100 * rd / tot))}%` : 'processing prompt';
-          liveTitle = 'How much of the prompt the engine has read — it updates as it goes.';
-        } else if (s.engine_live_state === 'generating') {
-          status = s.engine_live_generated == null ? 'generating'
-            : `generating · ${tok(Math.round(+s.engine_live_generated))} tokens`;
-          liveTitle = s.engine_live_max_tokens ? `max ${tok(Math.round(+s.engine_live_max_tokens))} tokens` : '';
-        }
+        // Same extrapolator the 100 ms ticker uses, so the 1 s rebuild never
+        // jumps the numbers backwards.
+        const ls = liveStatus();
+        if (ls) { status = ls.status; liveTitle = ls.title; }
       } else if (isActive) {
         status = 'processing';
         liveTitle = 'In a serving slot — the engine only reports live numbers for one of them.';
@@ -358,6 +433,7 @@ function lastHistoryValue(key) {
 
 function renderMonitor(d) {
   state.data=d; const s=d.system||{}, m=d.model||{}, col=d.collectors||{};
+  anchorLive(s);
   state.doorOk = !!col.waitroom?.ok;
   $('stat-loaded').textContent=m.current_loaded_model||m.loaded_model||'none';
   // Two DISTINCT tiles driven by ENGINE state, not door admission (Spec

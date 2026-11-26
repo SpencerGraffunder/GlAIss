@@ -215,14 +215,19 @@ def test_running_card_shows_live_prompt_progress_then_generation_count():
     — only as many cards wear the active accent border as the engine actually
     runs in parallel (engine_live_running; serving=1 today, so exactly one)."""
     html, js = _html_and_js()
-    split = js.split("function engineSplit")[1].split("function activityBoxes")[0]
+    split = js.split("function engineSplit")[1].split("function anchorLive")[0]
     assert "engine_live_running" in split, \
         "the active-card count comes from the ENGINE's own slot count"
+    extrap = js.split("function anchorLive")[1].split("function activityBoxes")[0]
+    assert "processing prompt ·" in extrap and "generating ·" in extrap, \
+        "the extrapolator produces prefill percent, then the generated token count"
+    assert "engine_live_prompt_read" in extrap and "engine_live_prompt_total" in extrap \
+        and "engine_live_generated" in extrap, "the engine live block feeds the anchor"
     block = js.split("function activityBoxes")[1].split("function renderQueue")[0]
-    assert "processing prompt ·" in block and "generating ·" in block, \
-        "the active card shows prefill percent, then the generated token count"
-    assert "engine_live_prompt_read" in block and "engine_live_prompt_total" in block \
-        and "engine_live_generated" in block, "the engine live block drives the card"
+    assert "const ls = liveStatus();" in block, \
+        "the active card's status comes from the extrapolator, not raw fields"
+    assert "engine_live_generated" not in block, \
+        "raw live fields moved into the anchor — the card must not read them twice"
     assert "'queued'" in block and "es.liveTarget" in block, \
         "cards waiting their turn at the engine say 'queued', never the active status"
     assert "'qbox running' + (isActive ? '' : ' behind')" in block, \
@@ -308,3 +313,35 @@ def test_power_shown_is_the_wall_estimate():
         "the Metrics chart plots the wall estimate"
     assert "sensors ${fmt(last.system_power_w,'W')}" in js, \
         "the sensor-only sum stays visible next to the estimate, honestly labelled"
+
+
+def test_live_progress_extrapolates_at_10_hz():
+    """Spec 2026-11-26: prefill % and generated tokens must move ~10 Hz, not
+    once per poll. The page anchors every snapshot and extrapolates between
+    anchors — honestly: prefill caps at 99 while the engine still says
+    'reading', tokens cap at max_tokens, extrapolation freezes 2.5 s after the
+    last anchor, and a re-render of the SAME snapshot never snaps the display
+    backwards."""
+    _, js = _html_and_js()
+    assert "function anchorLive" in js and "function liveStatus" in js
+    assert "anchorLive(s);" in js.split("function renderMonitor")[1][:400], \
+        "every snapshot (poll or WS push) re-anchors the extrapolator"
+    assert "setInterval(tickLive, 100)" in js, "10 Hz patch ticker"
+    assert "Math.min(2.5," in js, "extrapolation freezes when samples stop"
+    assert "Math.min(99," in js, "reading never claims 100% before the flip"
+    assert "Math.min(g, Math.round(a.mx))" in js, "tokens cap at max_tokens"
+    assert "prev.rd === rd" in js, "same-snapshot re-render keeps the old anchor"
+    assert "a.rateRead * dt" in js and "a.rateGen * dt" in js, \
+        "both progress kinds extrapolate from a learned rate"
+
+
+def test_fresh_mid_generation_anchor_adopts_engine_rate_immediately():
+    """First snapshot that shows 'generating' already carries tok_s — adopting
+    it at once avoids one whole poll cycle of a frozen counter (Spec 2026-11-26
+    probe found this: the very first anchor sat at rate 0). Crucially the rates
+    are PER-PHASE: a reading→generating flip has a prev anchor too, and the old
+    phase's rate must not carry over — the probe caught exactly that variant."""
+    _, js = _html_and_js()
+    assert "prev && prev.phase === phase ? prev.rateGen" in js, \
+        "phase flip drops the old rate instead of inheriting it"
+    assert "phase === 'generating' && tps > 0" in js, "engine tok_s adopted on first sight"
