@@ -94,6 +94,15 @@ trusted VPN network (in practice: Cloudflare Access on
   and a live journal console for the same units.
 - CPU package power, total GPU power, combined system power, RAM, VRAM, CPU and
   GPU utilization, decode t/s, and prefill t/s history.
+- **Wall-power estimate (2026-11-25).** The sensor sum (RAPL CPU package + GPU
+  board draw) misses what a wall meter also sees: PSU/VRM conversion losses and
+  the always-on board, RAM, drives and fans. `monitor.estimate_wall_power()`
+  publishes `system_power_ac_w = internal × 1.10 + 125 W` in the snapshot and
+  the history; the top-bar tile (`wall ~`) and the Metrics power chart use it.
+  Calibrated against Spec's wall meter: idle sensors ~30 W ↔ wall 150–170 W.
+  Deep-idle sensor readings themselves swing 30–70 W with GPU clock states, so
+  expect a few tens of watts of wobble at idle; it tracks well under load. It
+  is labelled an estimate (`~`) everywhere and is never a measurement.
 - **Per-GPU cards** from the engine's `hardware.gpus` block (utilization, memory,
   temperature, power) with `nvidia-smi` as fallback when an engine reports no
   hardware block; PCIe rx/tx are aggregate totals from the engine.
