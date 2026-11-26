@@ -55,6 +55,27 @@ class ControlJob:
         }
 
 
+# Wall-power estimate from the internal measurement (RAPL CPU package + GPU
+# board draw). The OS-visible sum misses exactly what a wall meter adds: PSU
+# and VRM conversion losses, plus motherboard, RAM, drives, fans and standby
+# rails. Calibrated 2026-11-25 against Spec's wall meter: at idle the box
+# draws 150-170 W at the wall while the sensors sum ~30 W — the constant is
+# that ~125 W always-on floor (this machine's board+8DIMM+drives+PSU quiescent
+# are big), the 10% factor tracks PSU/VRM losses that grow with real load.
+# Known wobble: sensor-side idle itself swings 30-70 W with GPU clock states,
+# so the estimate reads ~5-30 W off at deep idle but tracks well under load.
+# Surfaced as an ESTIMATE, never as a measurement.
+AC_LOSS_FACTOR = 1.10
+AC_ALWAYS_ON_W = 125.0
+
+
+def estimate_wall_power(internal_w):
+    """None stays None; anything measurable becomes the calibrated AC estimate."""
+    if internal_w is None:
+        return None
+    return round(float(internal_w) * AC_LOSS_FACTOR + AC_ALWAYS_ON_W, 1)
+
+
 class History:
     def __init__(self, maxlen: int = 1800):
         self.samples: deque[Dict[str, Any]] = deque(maxlen=maxlen)
@@ -67,6 +88,7 @@ class History:
             "cpu_power_w": system.get("cpu_power_w"),
             "gpu_power_w": system.get("gpu_power_w"),
             "system_power_w": system.get("system_power_w"),
+            "system_power_ac_w": system.get("system_power_ac_w"),
             "cpu_util_percent": system.get("cpu_util_percent"),
             "ram_used_bytes": system.get("ram_used_bytes"),
             "ram_total_bytes": system.get("ram_total_bytes"),
@@ -408,6 +430,7 @@ class Monitor:
             system_power = rapl_w
         elif gpu_power is not None:
             system_power = gpu_power
+        system_power_ac = estimate_wall_power(system_power)
 
         lock = state.read_lock()
         manual = state.read_manual()
@@ -532,7 +555,13 @@ class Monitor:
                 "cpu_power_domains": rapl_domains,
                 "gpu_power_w": round(gpu_power, 2) if gpu_power is not None else None,
                 "system_power_w": system_power,
-                "system_power_label": "CPU package + GPU board draw",
+                "system_power_label": "CPU package + GPU board draw (sensors only)",
+                "system_power_ac_w": system_power_ac,
+                "system_power_ac_label": (
+                    "Estimated wall draw: internal x1.10 + 125 W — PSU/VRM losses plus "
+                    "the always-on board, RAM, drives and fans. Calibrated against the "
+                    "wall meter 2026-11-25 (idle: sensors ~30 W vs wall 150-170 W). "
+                    "An estimate, not a measurement."),
                 "cpu_util_percent": cpu,
                 "load_1": load[0] if len(load) > 0 else None,
                 "load_5": load[1] if len(load) > 1 else None,

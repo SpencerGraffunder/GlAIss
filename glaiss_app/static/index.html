@@ -99,7 +99,7 @@
     <div class="stat"><div class="label">loaded model</div><div class="value v-blue" id="stat-loaded">—</div></div>
     <div class="stat"><div class="label" title="Requests the engine is working on or streaming right now.">generating</div><div class="value v-accent" id="stat-busy">0</div></div>
     <div class="stat"><div class="label" title="Requests the door is holding back from the engine — queued behind the running batch, parked for a disabled model, or outside its window.">waiting</div><div class="value" id="stat-wait">0</div></div>
-    <div class="stat"><div class="label">system</div><div class="value" id="stat-power">—</div></div>
+    <div class="stat"><div class="label" title="Estimated wall draw, not a sensor reading — see hover.">wall ~</div><div class="value" id="stat-power">—</div></div>
     <div class="stat"><div class="label">RAM</div><div class="value" id="stat-ram">—</div></div>
     <div class="stat"><div class="label">VRAM</div><div class="value" id="stat-vram">—</div></div>
   </div>
@@ -145,7 +145,7 @@
     <div class="tabpane" id="pane-metrics">
       <div id="gpu-cards"></div>
       <div class="charts">
-        <div class="chart"><div class="chart-title">Power <span id="power-now" class="chart-value">—</span></div><canvas id="power-chart"></canvas></div>
+        <div class="chart"><div class="chart-title" title="Estimated wall draw (internal x1.10 + 125 W): PSU/VRM losses plus the always-on board, RAM, drives and fans — at idle the sensors alone read only ~30 W of the ~160 W this box pulls.">Power at the wall ~ <span id="power-now" class="chart-value">—</span></div><canvas id="power-chart"></canvas></div>
         <div class="chart"><div class="chart-title">Token speed <span id="tps-now" class="chart-value">—</span></div><canvas id="tps-chart"></canvas></div>
         <div class="chart"><div class="chart-title">System memory <span id="ram-now" class="chart-value">—</span></div><canvas id="ram-chart"></canvas></div>
         <div class="chart"><div class="chart-title">GPU memory <span id="vram-now" class="chart-value">—</span></div><canvas id="vram-chart"></canvas></div>
@@ -372,7 +372,8 @@ function renderMonitor(d) {
   // Kept for the Metrics tab's "tps now" readout (the top-bar tiles are gone).
   if (s.prefill_tps != null) state.lastPrefill = s.prefill_tps;
   if (s.decode_tps != null) state.lastDecode = s.decode_tps;
-  $('stat-power').textContent=s.system_power_w==null?'—':fmt(s.system_power_w,' W');
+  $('stat-power').textContent = s.system_power_ac_w == null ? '—' : fmt(s.system_power_ac_w, ' W ~');
+  $('stat-power').title = `${s.system_power_ac_label||''}\nSensors read ${fmt(s.system_power_w, ' W')} (CPU package + GPU board).`;
   $('stat-ram').textContent=fracGB(s.ram_used_bytes, s.ram_total_bytes);
   $('stat-vram').textContent=fracGB((s.vram_used_mib||0)*1048576, (s.vram_total_mib||0)*1048576);
   renderQueue(m);
@@ -653,8 +654,8 @@ function drawTokenChart(){
   g.fillStyle='#5aa9e6'; g.textAlign='right'; g.fillText('prefill t/s', x1, 10);
 }
 
-function renderCharts(){ if(state.activeTab!=='metrics')return; const x=state.history.samples||[], last=x[x.length-1]||{}; const pp=lastHistoryValue('prefill_tps') ?? state.lastPrefill; const dec=lastHistoryValue('decode_tps') ?? state.lastDecode; $('power-now').textContent=fmt(last.system_power_w,' W'); $('tps-now').textContent=`dec ${fmt(dec)} · pp ${fmt(pp)}`; $('ram-now').textContent=bytes(last.ram_used_bytes); $('vram-now').textContent=`${fmt(last.vram_used_mib,' MiB')}`;
-  drawChart('power-chart','system_power_w','#e0ad43'); drawTokenChart(); drawChart('ram-chart','ram_used_bytes','#5aa9e6',last.ram_total_bytes); drawChart('vram-chart','vram_used_mib','#c07de6',last.vram_total_mib);
+function renderCharts(){ if(state.activeTab!=='metrics')return; const x=state.history.samples||[], last=x[x.length-1]||{}; const pp=lastHistoryValue('prefill_tps') ?? state.lastPrefill; const dec=lastHistoryValue('decode_tps') ?? state.lastDecode; $('power-now').textContent=fmt(last.system_power_ac_w,' W ~')+(last.system_power_w!=null?` · sensors ${fmt(last.system_power_w,'W')}`:''); $('tps-now').textContent=`dec ${fmt(dec)} · pp ${fmt(pp)}`; $('ram-now').textContent=bytes(last.ram_used_bytes); $('vram-now').textContent=`${fmt(last.vram_used_mib,' MiB')}`;
+  drawChart('power-chart','system_power_ac_w','#e0ad43'); drawTokenChart(); drawChart('ram-chart','ram_used_bytes','#5aa9e6',last.ram_total_bytes); drawChart('vram-chart','vram_used_mib','#c07de6',last.vram_total_mib);
 }
 async function poll(){ try{const d=await(await fetch('/api/state')).json(); renderMonitor(d); const h=await(await fetch('/api/history?seconds=900')).json(); state.history=h; renderCharts();}catch(e){state.doorOk=false; updateOffline();} }
 

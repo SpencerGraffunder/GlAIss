@@ -408,3 +408,18 @@ def test_history_last_non_null_keeps_the_last_prefill():
     assert h.last_non_null("prefill_tps", "DeepSeek V4.1 Flash") == 199.1
     assert h.last_non_null("decode_tps", "DeepSeek V4.1 Flash") == 16.0
     assert h.last_non_null("prefill_tps", "Qwen 3.8 Flash Next Q4") is None
+
+
+def test_wall_power_estimate_is_calibrated_and_carried_everywhere():
+    """Spec 2026-11-25: the wall meter at idle reads 150-170 W while the
+    sensors sum ~30 W. The console must surface an ESTIMATE that closes that
+    gap — internal x1.10 + 125 W — in the snapshot, the history (so the chart
+    plots it) and never invent it for a missing sensor read."""
+    assert monitor.estimate_wall_power(None) is None, "no sensor read, no guess"
+    assert monitor.estimate_wall_power(30) == round(30 * 1.10 + 125, 1)
+    assert monitor.estimate_wall_power(458.26) == round(458.26 * 1.10 + 125, 1)
+    h = monitor.History()
+    h.add({"system": {"system_power_w": 30.0,
+                      "system_power_ac_w": monitor.estimate_wall_power(30.0)}})
+    assert h.samples[-1]["system_power_ac_w"] == 158.0, \
+        "the power chart plots the wall estimate, not the raw sensor sum"

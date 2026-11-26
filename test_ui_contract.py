@@ -294,3 +294,17 @@ def test_page_only_calls_routes_the_console_serves():
     called = {p.split("?")[0] for p in called}
     unknown = sorted(p for p in called if p not in console_routes())
     assert not unknown, f"page calls routes that do not exist: {unknown}"
+
+
+def test_power_shown_is_the_wall_estimate():
+    """Spec 2026-11-25: the sensors sum only part of what the wall meter sees
+    (idle: ~30 W internal vs 150-170 W at the plug). The tile and the power
+    chart must both carry the calibrated ESTIMATE, and the tile is labelled
+    'wall ~' so nobody mistakes it for a measurement."""
+    html, js = _html_and_js()
+    assert ">wall ~<" in html, "the tile says this is an estimate at the wall"
+    assert "s.system_power_ac_w" in js, "the tile shows the wall estimate"
+    assert "drawChart('power-chart','system_power_ac_w'" in js, \
+        "the Metrics chart plots the wall estimate"
+    assert "sensors ${fmt(last.system_power_w,'W')}" in js, \
+        "the sensor-only sum stays visible next to the estimate, honestly labelled"
